@@ -258,37 +258,54 @@ var $ = function (id) { return document.getElementById(id); };
 // ── ติดต่อเซิร์ฟเวอร์ ──
 // เปิดผ่านลิงก์ Apps Script → ใช้ google.script.run
 // เปิดเป็นแอป PWA (GitHub Pages) → ส่ง POST ไปที่ window.RX_API_URL (ตั้งใน config.js)
-var READ_ONLY = { apiNeedsPin: 1, apiInit: 1, apiListRows: 1 };
-function rawCall(fn, args, retried) {
+// คำสั่งที่ส่งซ้ำได้อย่างปลอดภัยเมื่อเน็ตหลุด (อ่านอย่างเดียว หรือเซิร์ฟเวอร์กันบันทึกซ้ำให้แล้ว)
+var SAFE_RETRY = { apiNeedsPin: 1, apiInit: 1, apiListRows: 1, apiReadLabel: 1, apiReadBarcode: 1, apiSaveRow: 1, apiDeleteRow: 1, apiFinish: 1 };
+var MAX_TRIES = 3;
+function rawCall(fn, args, attempt) {
+  attempt = attempt || 1;
   if (window.google && google.script && google.script.run) {
     return new Promise(function (resolve, reject) {
       google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn].apply(null, args);
     });
   }
   return fetchApi(fn, args).catch(function (e) {
-    // เน็ตสะดุด: ลองซ้ำ 1 ครั้งเฉพาะคำสั่งที่อ่านอย่างเดียว (คำสั่งบันทึกไม่ลองซ้ำ กันข้อมูลซ้ำ)
-    if (!retried && READ_ONLY[fn] && e.network) {
-      return new Promise(function (r) { setTimeout(r, 1500); }).then(function () { return rawCall(fn, args, true); });
+    if (e.network && SAFE_RETRY[fn] && attempt < MAX_TRIES) {
+      return new Promise(function (r) { setTimeout(r, 1500 * attempt); })
+        .then(function () { return rawCall(fn, args, attempt + 1); });
     }
+    if (e.network) e.message += ' — ลองใหม่อีกครั้ง (' + fn + ', ' + e.detail + ')';
     throw e;
   });
 }
 function fetchApi(fn, args) {
+  var started = Date.now();
+  var ctrl = window.AbortController ? new AbortController() : null;
+  var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 60000) : null;   // รอสูงสุด 60 วินาที
+  function netErr(e) {
+    var err = new Error(e && e.name === 'AbortError' ? 'เซิร์ฟเวอร์ตอบช้าเกินไป' : 'ไม่มีอินเทอร์เน็ต หรือเชื่อมต่อเซิร์ฟเวอร์ไม่ได้');
+    err.network = true;
+    err.detail = Math.round((Date.now() - started) / 1000) + ' วิ ' + ((e && (e.name + ': ' + e.message)) || '');
+    throw err;
+  }
   return fetch(window.RX_API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ fn: fn, args: args })
+    body: JSON.stringify({ fn: fn, args: args }),
+    signal: ctrl ? ctrl.signal : undefined
   }).then(function (res) {
     if (!res.ok) throw new Error('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ (' + res.status + ')');
-    return res.json();
-  }, function () {
-    var err = new Error('ไม่มีอินเทอร์เน็ต หรือเชื่อมต่อเซิร์ฟเวอร์ไม่ได้');
-    err.network = true;
-    throw err;
-  }).then(function (j) {
+    return res.text().catch(netErr);     // ขาดระหว่างรับผล = เน็ตหลุด
+  }, netErr).then(function (txt) {
+    if (timer) clearTimeout(timer);
+    var j;
+    try { j = JSON.parse(txt); } catch (x) { throw new Error('เซิร์ฟเวอร์ตอบผิดรูปแบบ ลองใหม่อีกครั้ง'); }
     if (!j.ok) throw new Error(j.error);
     return j.data;
-  });
+  }, function (e) { if (timer) clearTimeout(timer); throw e; });
+}
+function newId() {
+  return (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+    : 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
 }
 function call(fn) {
   var args = [S.pin].concat(Array.prototype.slice.call(arguments, 1));
@@ -480,7 +497,7 @@ $('scanFile').addEventListener('change', function () {
     onScanned(code);
   }).catch(function () {
     bcStatus('<div class="spin"></div> ให้ AI อ่านตัวเลขใต้บาร์โค้ด…');
-    return resizeImage(f, 1600)
+    return resizeImage(f, 1280)
       .then(function (dataUrl) { return call('apiReadBarcode', dataUrl.split(',')[1], 'image/jpeg'); })
       .then(function (r) {
         if (!r.barcode) throw new Error('อ่านบาร์โค้ดจากรูปไม่ได้ ลองถ่ายใหม่ให้เห็นตัวเลขใต้บาร์โค้ดชัด ๆ หรือพิมพ์เอง');
@@ -504,7 +521,7 @@ function resizeImage(file, maxSide) {
       c.height = Math.round(img.height * s);
       c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
       URL.revokeObjectURL(url);
-      resolve(c.toDataURL('image/jpeg', 0.85));
+      resolve(c.toDataURL('image/jpeg', 0.8));
     };
     img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('เปิดรูปไม่ได้')); };
     img.src = url;
@@ -520,7 +537,7 @@ $('labelFile').addEventListener('change', function () {
   this.value = '';
   if (!f) return;
   aiStatus('<div class="spin"></div> AI กำลังอ่านฉลาก…');
-  resizeImage(f, 1600).then(function (dataUrl) {
+  resizeImage(f, 1280).then(function (dataUrl) {
     var im = document.createElement('img');
     im.src = dataUrl;
     $('thumbs').appendChild(im);
@@ -598,8 +615,10 @@ $('fExp').addEventListener('blur', validateDates);
 
 // ── บันทึก ──
 function formData() {
+  if (!S.newId) S.newId = newId();
   return {
     id: S.editId,
+    newId: S.editId ? '' : S.newId,   // รหัสเดิมจนกว่าจะบันทึกสำเร็จ → กดบันทึกซ้ำหลังเน็ตหลุดก็ไม่ซ้ำ
     barcode: $('fBarcode').value.trim(),
     manualName: $('fManual').value.trim(),
     qty: $('fQty').value.trim(),
@@ -628,11 +647,15 @@ function saveRow() {
     toast(wasEdit ? '✓ แก้ไขรายการที่ ' + r.saved + ' แล้ว' : '✓ บันทึกรายการที่ ' + r.saved + ' แล้ว');
     resetForm();
     if (wasEdit) showTab('list');
-  }).catch(function (e) { toast(e.message, true); })
-    .then(function () { S.busy = false; $('saveBtn').disabled = false; $('saveBtn').textContent = S.editId ? '✓ บันทึกการแก้ไข' : '✓ บันทึกรายการ'; });
+  }).catch(function (e) {
+    toast(e.message, true);
+    // เน็ตหลุดตอนรอผล: เซิร์ฟเวอร์อาจบันทึกไปแล้ว → โหลดรายการล่าสุดมาแสดง (กดบันทึกซ้ำได้ ไม่ซ้ำ)
+    call('apiListRows').then(setRows).catch(function () {});
+  }).then(function () { S.busy = false; $('saveBtn').disabled = false; $('saveBtn').textContent = S.editId ? '✓ บันทึกการแก้ไข' : '✓ บันทึกรายการ'; });
 }
 function resetForm() {
   S.editId = null;
+  S.newId = null;
   S.aiFilled = {};
   ['fBarcode', 'fManual', 'fQty', 'fPrice', 'fLot', 'fMfg', 'fExp'].forEach(function (id) { $(id).value = ''; $(id).classList.remove('ai', 'err'); });
   ['hMfg', 'hExp'].forEach(function (id) { $(id).textContent = ''; });
@@ -713,7 +736,9 @@ function confirmFinish() {
 function doFinish() {
   $('finishBtn').disabled = true;
   $('finishBtn').textContent = 'กำลังสร้างไฟล์…';
-  call('apiFinish').then(function (r) {
+  if (!S.finishId) S.finishId = newId();
+  call('apiFinish', S.finishId).then(function (r) {
+    S.finishId = null;
     setRows([]);
     dialog('✓ สร้างไฟล์แล้ว',
       '<b>' + esc(r.fileName) + '</b><br>' + r.count + ' รายการ<br><br>ไฟล์อยู่ในโฟลเดอร์ "' + esc(r.folderName) + '" ใน Google Drive — เปิดจากคอมเพื่อดาวน์โหลดได้เลย',
