@@ -89,6 +89,10 @@ input.in.err{border-color:var(--bad);background:var(--bad-soft)}
 
 .item{background:var(--card);border-radius:var(--radius);padding:12px 14px;margin-bottom:10px;box-shadow:0 1px 3px rgba(22,35,58,.08);border-left:4px solid var(--primary)}
 .item.nf{border-left-color:var(--warn)}
+.item.pending{border-left-style:dashed}
+.qwait{font-size:13px;color:var(--muted);margin-bottom:4px}
+.qbad{font-size:13px;color:var(--bad);font-weight:600;margin-bottom:4px}
+.h-count.bad{background:var(--bad)}
 .item-top{display:flex;gap:8px;align-items:flex-start}
 .seq{font-weight:700;color:var(--muted);min-width:28px}
 .item-name{flex:1;font-weight:700}
@@ -119,6 +123,7 @@ input.in.err{border-color:var(--bad);background:var(--bad-soft)}
 <header>
   <div class="h-row">
     <div class="h-title">💊 ระบบรับเข้ายา</div>
+    <div class="h-count hidden" id="hSync"></div>
     <div class="h-count" id="hCount">0 รายการ</div>
   </div>
   <nav id="nav">
@@ -221,6 +226,8 @@ input.in.err{border-color:var(--bad);background:var(--bad-soft)}
       <h3>ค้นหาในทะเบียน</h3>
       <input class="in" id="pSearch" placeholder="ชื่อยา หรือบาร์โค้ด" autocomplete="off">
       <div id="pResult" style="margin-top:8px"></div>
+      <button class="btn ghost big" style="margin-top:10px" onclick="refreshAll(true, true)">🔄 อัปเดตทะเบียน</button>
+      <div class="hint">แอปจำทะเบียนไว้ในเครื่องและอัปเดตให้เองทุกครั้งที่เปิดแอป — กดปุ่มนี้เมื่อเพิ่งเพิ่มยาใน Google Sheet แล้วอยากใช้ทันที</div>
     </div>
     <div class="card">
       <h3>เพิ่มสินค้าใหม่ในทะเบียน</h3>
@@ -252,7 +259,7 @@ input.in.err{border-color:var(--bad);background:var(--bad-soft)}
 
 <script src="datelib.js"></script>
 <script>
-var S = { pin: '', products: [], byKey: {}, rows: [], editId: null, aiFilled: {}, busy: false, scanner: null };
+var S = { pin: '', products: [], byKey: {}, rows: [], serverRows: [], editId: null, editQueued: false, aiFilled: {}, appShown: false };
 var $ = function (id) { return document.getElementById(id); };
 
 // ── ติดต่อเซิร์ฟเวอร์ ──
@@ -311,10 +318,18 @@ function call(fn) {
   var args = [S.pin].concat(Array.prototype.slice.call(arguments, 1));
   return rawCall(fn, args).catch(function (e) {
     var msg = (e && e.message) || String(e);
-    if (msg.indexOf('PIN_INVALID') >= 0) { try { localStorage.removeItem('rx_pin'); } catch (x) {} showPin(); msg = 'PIN ไม่ถูกต้อง'; }
-    throw new Error(msg);
+    var pinBad = msg.indexOf('PIN_INVALID') >= 0;
+    if (pinBad) { try { localStorage.removeItem('rx_pin'); } catch (x) {} showPin(); msg = 'PIN ไม่ถูกต้อง'; }
+    var err = new Error(msg);
+    err.network = !!(e && e.network);
+    err.pin = pinBad;
+    throw err;
   });
 }
+
+// ── เก็บในเครื่อง (localStorage) — ถ้าเบราว์เซอร์ไม่ให้เก็บ แอปยังทำงานได้ แค่ไม่เร็วขึ้น ──
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* เต็ม/ถูกบล็อก — ข้าม */ } }
 
 function toast(msg, bad) {
   var t = $('toast');
@@ -346,39 +361,70 @@ function esc(s) {
 }
 
 // ── เริ่มต้น / PIN ──
+// เปิดแอป: ถ้าเคยโหลดทะเบียนไว้ในเครื่อง → ใช้ได้ทันที แล้วดึงทะเบียน+รายการล่าสุดเบื้องหลัง
+//          ครั้งแรกบนเครื่องนี้ → แสดงหน้าโหลดจนได้ข้อมูล
 function start() {
-  rawCall('apiNeedsPin', []).then(function (need) {
-    if (!need) return load();
-    try { S.pin = localStorage.getItem('rx_pin') || ''; } catch (e) {}
-    if (S.pin) load(); else showPin();
-  }).catch(function (e) {
-    $('loadView').innerHTML = '<div class="empty">เชื่อมต่อไม่สำเร็จ: ' + esc(e.message) +
-      '<br><br><button class="btn p" onclick="location.reload()">ลองใหม่</button></div>';
-  });
+  S.pin = lsGet('rx_pin') || '';
+  qLoad();
+  var cached = null;
+  try { cached = JSON.parse(lsGet('rx_products') || 'null'); } catch (e) { cached = null; }
+  if (cached && cached.length) {
+    setProducts(cached);
+    renderRows();
+    showApp();
+    refreshAll(true);
+  } else {
+    refreshAll(false);
+  }
+}
+function showApp() {
+  if (S.appShown) return;
+  S.appShown = true;
+  $('loadView').classList.add('hidden');
+  $('pinView').classList.add('hidden');
+  $('nav').classList.remove('hidden');
+  showTab('form');
 }
 function showPin() {
+  S.appShown = false;
   ['loadView', 'tab-form', 'tab-list', 'tab-prod', 'barForm', 'barList', 'nav'].forEach(function (id) { $(id).classList.add('hidden'); });
   $('pinView').classList.remove('hidden');
   $('pinInput').focus();
 }
 function submitPin() {
   S.pin = $('pinInput').value.trim();
-  try { localStorage.setItem('rx_pin', S.pin); } catch (e) {}
+  lsSet('rx_pin', S.pin);
   $('pinView').classList.add('hidden');
   $('loadView').classList.remove('hidden');
-  load();
+  refreshAll(false);
 }
 $('pinInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') submitPin(); });
 
-function load() {
-  call('apiInit').then(function (d) {
-    setProducts(d.products);
-    setRows(d.rows);
-    $('loadView').classList.add('hidden');
-    $('nav').classList.remove('hidden');
-    showTab('form');
+/** ดึงทะเบียนสินค้า + รายการรับเข้าล่าสุด (คำสั่งเดียว เช็ก PIN ไปในตัว) */
+function refreshAll(background, announce) {
+  return call('apiInit').then(function (d) {
+    var json = JSON.stringify(d.products);
+    var before = S.products.length;
+    var changed = json !== lsGet('rx_products');
+    lsSet('rx_products', json);
+    if (changed || !S.products.length) setProducts(d.products);
+    S.serverRows = d.rows;
+    renderRows();
+    showApp();
+    if (background && changed) {
+      var diff = d.products.length - before;
+      toast('อัปเดตทะเบียนแล้ว' + (diff > 0 ? ' (+' + diff + ' รายการ)' : ''));
+    } else if (announce) {
+      toast('ทะเบียนเป็นปัจจุบันแล้ว (' + d.products.length + ' รายการ)');
+    }
     if (!d.hasKey) toast('ยังไม่ได้ตั้งค่า Gemini API key — ถ่ายรูปอ่านฉลากจะใช้ไม่ได้', true);
-  }).catch(function (e) { if (e.message !== 'PIN ไม่ถูกต้อง') $('loadView').innerHTML = '<div class="empty">โหลดไม่สำเร็จ: ' + esc(e.message) + '</div>'; else toast(e.message, true); });
+    qRun();
+  }).catch(function (e) {
+    if (e.pin) return;                                   // หน้า PIN แสดงแล้ว
+    if (background) { if (announce) toast(e.message, true); qRun(); return; }   // ใช้ทะเบียนเดิมในเครื่องไปก่อน
+    $('loadView').innerHTML = '<div class="empty">เชื่อมต่อไม่สำเร็จ: ' + esc(e.message) +
+      '<br><br><button class="btn p" onclick="location.reload()">ลองใหม่</button></div>';
+  });
 }
 
 function barcodeKey(b) {
@@ -629,7 +675,6 @@ function formData() {
   };
 }
 function saveRow() {
-  if (S.busy) return;
   var d = formData();
   if (!d.barcode && !d.manualName) return toast('ต้องมีบาร์โค้ด หรือชื่อสินค้าพิมพ์เอง', true);
   if (d.barcode && !S.byKey[barcodeKey(d.barcode)] && !d.manualName) return toast('บาร์โค้ดไม่อยู่ในทะเบียน — กรุณาใส่ชื่อสินค้าพิมพ์เอง', true);
@@ -638,23 +683,74 @@ function saveRow() {
   if (d.price && !(Number(String(d.price).replace(/,/g, '')) >= 0)) { $('fPrice').focus(); return toast('ราคาไม่ถูกต้อง', true); }
   if (!validateDates()) return toast('วันที่ไม่ถูกต้อง', true);
   d = formData();   // หลัง validateDates วันที่ถูกจัดรูปแบบแล้ว
-  S.busy = true;
-  $('saveBtn').disabled = true;
-  $('saveBtn').textContent = 'กำลังบันทึก…';
-  var wasEdit = !!S.editId;
-  call('apiSaveRow', d).then(function (r) {
-    setRows(r.rows);
-    toast(wasEdit ? '✓ แก้ไขรายการที่ ' + r.saved + ' แล้ว' : '✓ บันทึกรายการที่ ' + r.saved + ' แล้ว');
-    resetForm();
-    if (wasEdit) showTab('list');
-  }).catch(function (e) {
-    toast(e.message, true);
-    // เน็ตหลุดตอนรอผล: เซิร์ฟเวอร์อาจบันทึกไปแล้ว → โหลดรายการล่าสุดมาแสดง (กดบันทึกซ้ำได้ ไม่ซ้ำ)
-    call('apiListRows').then(setRows).catch(function () {});
-  }).then(function () { S.busy = false; $('saveBtn').disabled = false; $('saveBtn').textContent = S.editId ? '✓ บันทึกการแก้ไข' : '✓ บันทึกรายการ'; });
+  // ไม่ต้องรอเซิร์ฟเวอร์: ใส่คิว แล้วทำรายการถัดไปได้ทันที แอปส่งให้เบื้องหลัง
+  var wasEdit = !!(S.editId || S.editQueued);
+  qAdd(d);
+  toast(wasEdit ? '✓ แก้ไขแล้ว — กำลังส่ง' : '✓ บันทึกแล้ว — กำลังส่ง');
+  resetForm();
+  if (wasEdit) showTab('list');
 }
+
+// ── คิวส่งข้อมูลเบื้องหลัง ──
+// เก็บในเครื่องด้วย: ปิดแอประหว่างส่ง เปิดใหม่จะส่งต่อให้เอง
+// ส่งซ้ำได้ปลอดภัย เพราะแต่ละรายการมี newId (เซิร์ฟเวอร์ไม่บันทึกซ้ำ)
+var Q = { items: [], busy: false, waitUntil: 0 };
+function qKey(d) { return d.id ? 'e:' + d.id : 'n:' + d.newId; }
+function qLoad() {
+  try { Q.items = JSON.parse(lsGet('rx_queue') || '[]'); } catch (e) { Q.items = []; }
+  Q.items.forEach(function (it) { if (it.state === 'sending') it.state = 'pending'; });
+}
+function qSave() { lsSet('rx_queue', JSON.stringify(Q.items)); }
+function qAdd(d) {
+  var key = qKey(d);
+  var it = Q.items.filter(function (x) { return x.key === key; })[0];
+  if (it && it.state === 'sending') {
+    it.next = d;                   // กำลังส่งอยู่ → ส่งค่าใหม่ต่อทันทีที่รอบนี้เสร็จ
+  } else if (it) {
+    it.data = d; it.state = 'pending'; it.error = '';
+  } else {
+    Q.items.push({ key: key, data: d, state: 'pending', error: '' });
+  }
+  qSave();
+  renderRows();
+  Q.waitUntil = 0;
+  qRun();
+}
+function qRun() {
+  if (Q.busy || !S.appShown) return;
+  var wait = Q.waitUntil - Date.now();
+  if (wait > 0) { clearTimeout(Q.timer); Q.timer = setTimeout(qRun, wait); return; }
+  var it = Q.items.filter(function (x) { return x.state === 'pending'; })[0];
+  if (!it) return;
+  Q.busy = true;
+  it.state = 'sending';
+  renderRows();
+  call('apiSaveRow', it.data).then(function (r) {
+    if (it.next) { it.data = it.next; it.next = null; it.state = 'pending'; }
+    else Q.items = Q.items.filter(function (x) { return x !== it; });
+    S.serverRows = r.rows;
+  }).catch(function (e) {
+    if (e.network) {
+      it.state = 'pending';
+      it.error = 'รอส่งใหม่ (เน็ตสะดุด)';
+      Q.waitUntil = Date.now() + 15000;           // พักแล้วลองใหม่เอง
+    } else {
+      it.state = 'failed';                         // ข้อมูลผิด/PIN ผิด — ต้องให้คนแก้
+      it.error = e.message;
+      if (!e.pin) toast('ส่งไม่สำเร็จ: ' + e.message + ' — ดูที่แท็บรายการ', true);
+    }
+  }).then(function () {
+    Q.busy = false;
+    qSave();
+    renderRows();
+    qRun();
+  });
+}
+window.addEventListener('online', function () { Q.waitUntil = 0; qRun(); });
+
 function resetForm() {
   S.editId = null;
+  S.editQueued = false;
   S.newId = null;
   S.aiFilled = {};
   ['fBarcode', 'fManual', 'fQty', 'fPrice', 'fLot', 'fMfg', 'fExp'].forEach(function (id) { $(id).value = ''; $(id).classList.remove('ai', 'err'); });
@@ -670,11 +766,39 @@ function resetForm() {
 }
 
 // ── รายการ ──
-function setRows(rows) {
-  S.rows = rows.slice().sort(function (a, b) { return (Number(b.seq) || 0) - (Number(a.seq) || 0); });
+// สิ่งที่แสดง = รายการบนเซิร์ฟเวอร์ + รายการในคิวที่ยังส่งไม่เสร็จ
+function setRows(rows) { S.serverRows = rows; renderRows(); }
+function queueRowView(it) {
+  var d = it.data, p = d.barcode ? S.byKey[barcodeKey(d.barcode)] : null;
+  return {
+    id: d.id || d.newId, seq: '', barcode: d.barcode, name: p ? p.name : '', manualName: d.manualName,
+    unit: p ? p.unit : '', pack: p ? p.pack : '', qty: d.qty, price: d.price, lot: d.lot, mfg: d.mfg, exp: d.exp,
+    _q: it.state, _err: it.error, _key: it.key
+  };
+}
+function renderRows() {
+  var server = (S.serverRows || []).slice().sort(function (a, b) { return (Number(b.seq) || 0) - (Number(a.seq) || 0); });
+  var byId = {};
+  server.forEach(function (r) { byId[r.id] = r; });
+  var pendingNew = [];
+  Q.items.forEach(function (it) {
+    var v = queueRowView(it);
+    if (it.data.id && byId[it.data.id]) {           // แก้ไขรายการเดิม → แสดงค่าใหม่ทับ
+      v.seq = byId[it.data.id].seq;
+      var idx = server.indexOf(byId[it.data.id]);
+      server[idx] = v;
+    } else if (!it.data.id && !byId[it.data.newId]) {
+      pendingNew.push(v);
+    }
+  });
+  S.rows = pendingNew.reverse().concat(server);
   var n = S.rows.length;
+  var waiting = Q.items.length;
+  var failed = Q.items.filter(function (x) { return x.state === 'failed'; }).length;
   $('hCount').textContent = n + ' รายการ';
-  $('lCount').textContent = n + ' รายการ';
+  $('hSync').textContent = failed ? '⚠️ ส่งไม่สำเร็จ ' + failed : waiting ? '⏳ กำลังส่ง ' + waiting : '';
+  $('hSync').className = 'h-count' + (failed ? ' bad' : '') + (waiting ? '' : ' hidden');
+  $('lCount').textContent = n + ' รายการ' + (waiting ? ' (รอส่ง ' + waiting + ')' : '');
   var total = S.rows.reduce(function (s, r) { return s + (Number(r.price) || 0); }, 0);
   $('lTotal').textContent = 'รวม ' + total.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' บาท';
   $('finishBtn').disabled = !n;
@@ -682,8 +806,10 @@ function setRows(rows) {
   if (!n) { box.innerHTML = '<div class="empty">ยังไม่มีรายการ</div>'; return; }
   box.innerHTML = S.rows.map(function (r) {
     var title = r.name || r.manualName || r.barcode;
-    return '<div class="item' + (r.name ? '' : ' nf') + '">' +
-      '<div class="item-top"><div class="seq">#' + esc(r.seq) + '</div><div class="item-name">' + esc(title) +
+    var badge = r._q === 'failed' ? '<div class="qbad">⚠️ ส่งไม่สำเร็จ: ' + esc(r._err) + ' — กดแก้ไขแล้วบันทึกใหม่</div>'
+      : r._q ? '<div class="qwait">⏳ ' + (r._q === 'sending' ? 'กำลังส่ง…' : esc(r._err || 'รอส่ง')) + '</div>' : '';
+    return '<div class="item' + (r.name ? '' : ' nf') + (r._q ? ' pending' : '') + '">' + badge +
+      '<div class="item-top"><div class="seq">' + (r.seq ? '#' + esc(r.seq) : '⏳') + '</div><div class="item-name">' + esc(title) +
       (r.name && r.manualName ? '<br><small style="color:var(--muted);font-weight:400">' + esc(r.manualName) + '</small>' : '') + '</div></div>' +
       '<div class="item-grid">' +
       '<div><span>บาร์โค้ด</span> ' + esc(r.barcode || '-') + '</div><div><span>หน่วย</span> ' + esc(r.unit || '-') + '</div>' +
@@ -696,18 +822,26 @@ function setRows(rows) {
   }).join('');
 }
 function refreshRows() {
-  call('apiListRows').then(function (rows) { setRows(rows); toast('โหลดแล้ว'); }).catch(function (e) { toast(e.message, true); });
+  call('apiListRows').then(function (rows) { setRows(rows); toast('โหลดแล้ว'); qRun(); }).catch(function (e) { toast(e.message, true); });
 }
+function queueItemFor(r) { return r && r._key ? Q.items.filter(function (x) { return x.key === r._key; })[0] : null; }
 function editRow(id) {
   var r = S.rows.filter(function (x) { return x.id === id; })[0];
   if (!r) return;
+  var it = queueItemFor(r);
+  if (it && it.state === 'sending') return toast('กำลังส่งรายการนี้อยู่ รอสักครู่แล้วค่อยแก้', true);
   resetForm();
-  S.editId = id;
+  if (it && !it.data.id) {                    // ยังไม่ถึงเซิร์ฟเวอร์ → แก้ในคิว (ใช้ newId เดิม)
+    S.editQueued = true;
+    S.newId = it.data.newId;
+  } else {
+    S.editId = it ? it.data.id : id;
+  }
   $('fBarcode').value = r.barcode; $('fManual').value = r.manualName;
   $('fQty').value = r.qty; $('fPrice').value = r.price;
   $('fLot').value = r.lot; $('fMfg').value = r.mfg; $('fExp').value = r.exp;
   lookup();
-  $('editSeq').textContent = r.seq;
+  $('editSeq').textContent = r.seq || '(รอส่ง)';
   $('editBanner').classList.remove('hidden');
   $('saveBtn').textContent = '✓ บันทึกการแก้ไข';
   showTab('form');
@@ -715,10 +849,18 @@ function editRow(id) {
 function deleteRow(id) {
   var r = S.rows.filter(function (x) { return x.id === id; })[0];
   if (!r) return;
-  dialog('ลบรายการ #' + r.seq + '?', esc(r.name || r.manualName || r.barcode), [
+  var it = queueItemFor(r);
+  if (it && it.state === 'sending') return toast('กำลังส่งรายการนี้อยู่ รอสักครู่แล้วค่อยลบ', true);
+  dialog('ลบรายการ' + (r.seq ? ' #' + r.seq : '') + '?', esc(r.name || r.manualName || r.barcode), [
     { text: 'ยกเลิก' },
     { text: 'ลบ', cls: 'bad', fn: function () {
-      call('apiDeleteRow', id).then(function (rows) { setRows(rows); toast('ลบแล้ว'); }).catch(function (e) { toast(e.message, true); });
+      if (it) {                                   // ทิ้งจากคิว
+        Q.items = Q.items.filter(function (x) { return x !== it; });
+        qSave();
+        renderRows();
+        if (!it.data.id) return toast('ลบแล้ว');   // ยังไม่ถึงเซิร์ฟเวอร์ ไม่ต้องลบที่นั่น
+      }
+      call('apiDeleteRow', it ? it.data.id : id).then(function (rows) { setRows(rows); toast('ลบแล้ว'); }).catch(function (e) { toast(e.message, true); });
     } }
   ]);
 }
@@ -727,6 +869,15 @@ function deleteRow(id) {
 function confirmFinish() {
   var n = S.rows.length;
   if (!n) return;
+  if (Q.items.length) {
+    var failed = Q.items.filter(function (x) { return x.state === 'failed'; }).length;
+    Q.waitUntil = 0;
+    qRun();
+    return dialog('ยังส่งข้อมูลไม่ครบ',
+      failed ? 'มี ' + failed + ' รายการที่ส่งไม่สำเร็จ (ขึ้นสีแดงในรายการ) — กดแก้ไขแล้วบันทึกใหม่ หรือลบทิ้ง ก่อนสร้างไฟล์'
+        : 'กำลังส่งอีก ' + Q.items.length + ' รายการ รอให้ขึ้นเลขลำดับครบก่อน แล้วค่อยกดสร้างไฟล์อีกครั้ง',
+      [{ text: 'ตกลง', cls: 'p' }]);
+  }
   var noLot = S.rows.filter(function (r) { return !r.lot || !r.exp; }).length;
   dialog('สร้างไฟล์ Excel?',
     'สร้างไฟล์จาก <b>' + n + ' รายการ</b> ไปเก็บใน Google Drive แล้วล้างรายการเพื่อเริ่มรอบใหม่' +
@@ -769,6 +920,7 @@ function addProduct() {
   call('apiAddProduct', p).then(function (row) {
     S.products.push({ barcode: row[0], name: row[1], unit: row[2], pack: row[3], lc: (row[1] + ' ' + row[0]).toLowerCase() });
     if (row[0]) S.byKey[barcodeKey(row[0])] = S.products[S.products.length - 1];
+    lsSet('rx_products', JSON.stringify(S.products.map(function (x) { return [x.barcode, x.name, x.unit, x.pack]; })));
     ['nBarcode', 'nName', 'nUnit', 'nPack'].forEach(function (id) { $(id).value = ''; });
     toast('✓ เพิ่ม ' + row[1] + ' แล้ว');
     if (row[0]) { $('fBarcode').value = row[0]; showTab('form'); lookup(); $('fQty').focus(); }
