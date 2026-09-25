@@ -204,7 +204,7 @@ input.in.err{border-color:var(--bad);background:var(--bad-soft)}
           <div class="hint" id="hExp"></div>
         </div>
       </div>
-      <div class="hint">ปี ค.ศ. เท่านั้น (พิมพ์ พ.ศ. ระบบแปลงให้) · ไม่มีวัน: วันผลิต = 01, วันหมดอายุ = สิ้นเดือน</div>
+      <div class="hint">พิมพ์แค่ตัวเลข ระบบใส่ / ให้ เช่น <b>14022026</b> → 14/02/2026 · มีแค่เดือน/ปี พิมพ์ <b>022029</b> → วันผลิต = 01, วันหมดอายุ = สิ้นเดือน · ปี พ.ศ. ระบบแปลงเป็น ค.ศ. ให้</div>
     </div>
   </section>
 
@@ -583,6 +583,18 @@ function validateDates() {
 }
 $('fMfg').addEventListener('blur', validateDates);
 $('fExp').addEventListener('blur', validateDates);
+
+// แป้นตัวเลขบนมือถือไม่มี "/" → ใส่ให้อัตโนมัติระหว่างพิมพ์: 14022026 → 14/02/2026
+['fMfg', 'fExp'].forEach(function (id) {
+  $(id).addEventListener('input', function (e) {
+    if (e.inputType && e.inputType.indexOf('delete') === 0) return;   // ลบได้ตามปกติ
+    var v = this.value;
+    if (/[^\d\/]/.test(v)) return;             // พิมพ์ตัวอักษร เช่น "FEB 2026" → ไม่ยุ่ง ปล่อยให้แปลงตอนออกจากช่อง
+    var d = v.replace(/\//g, '').slice(0, 8);
+    var out = d.slice(0, 2) + (d.length > 2 ? '/' + d.slice(2, 4) : '') + (d.length > 4 ? '/' + d.slice(4) : '');
+    if (out !== v) this.value = out;
+  });
+});
 
 // ── บันทึก ──
 function formData() {

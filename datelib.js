@@ -78,6 +78,19 @@ function parseDateText(text, kind) {
   s = s.toUpperCase().replace(/\s+/g, ' ');
   var m, v, re;
 
+  // พิมพ์แต่ตัวเลข (แอปใส่ / ให้ระหว่างพิมพ์) 6 หลักที่ท้ายเป็นปี 4 หลัก = เดือน+ปี เช่น 022029 / "02/20/29" → 02/2029
+  if (/^[\d\/]+$/.test(s)) {
+    var dg = s.replace(/\//g, '');
+    if (/^\d{6}$/.test(dg) && /^(19|20|25)\d\d$/.test(dg.slice(2))) {
+      v = normalizeDateParts(null, dg.slice(0, 2), dg.slice(2), kind);
+      if (v) return v;
+    }
+    if (/^\d{6}$/.test(dg)) {                      // ddmmyy เช่น 140226
+      v = normalizeDateParts(dg.slice(0, 2), dg.slice(2, 4), dg.slice(4), kind);
+      if (v) return v;
+    }
+  }
+
   function dmy(d, mo, y) {
     d = d === null ? null : Number(d);
     mo = Number(mo);
