@@ -70,6 +70,8 @@ input.in.err{border-color:var(--bad);background:var(--bad-soft)}
 .link{background:none;border:0;color:var(--primary);font-weight:700;text-decoration:underline;cursor:pointer;padding:0}
 
 #reader{margin-top:10px;border-radius:10px;overflow:hidden;background:#000}
+.scan-btn{position:relative;display:flex;align-items:center}
+.scan-btn input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}
 .sugg{border:1.5px solid var(--line);border-radius:10px;margin-top:6px;overflow:hidden}
 .sugg button{display:block;width:100%;text-align:left;background:#fff;border:0;border-bottom:1px solid var(--line);padding:9px 12px;cursor:pointer}
 .sugg button:last-child{border-bottom:0}
@@ -152,9 +154,11 @@ input.in.err{border-color:var(--bad);background:var(--bad-soft)}
       <h3>1. บาร์โค้ด</h3>
       <div class="row">
         <input class="in grow" id="fBarcode" placeholder="ยิง/พิมพ์บาร์โค้ด หรือพิมพ์ชื่อยาเพื่อค้นหา" autocomplete="off" enterkeyhint="done">
-        <button class="btn p" id="scanBtn" onclick="toggleScan()">📷 สแกน</button>
+        <label class="btn p scan-btn" id="scanBtn">📷 ถ่าย
+          <input type="file" id="scanFile" accept="image/*" capture="environment">
+        </label>
       </div>
-      <input type="file" id="scanFile" accept="image/*" capture="environment" class="hidden">
+      <div id="bcStatus" class="status hidden"></div>
       <div id="reader" class="hidden"></div>
       <div id="sugg" class="sugg hidden"></div>
       <div id="prodBox"></div>
@@ -436,48 +440,57 @@ function goAddProduct() {
   $('nName').focus();
 }
 
-// ── สแกนบาร์โค้ดด้วยกล้อง ──
+// ── ถ่ายรูปบาร์โค้ด ──
+// ใช้แอปกล้องของมือถือ (โฟกัสดีกว่ากล้องสดในเว็บ) → อ่านในเครื่องก่อน ถ้าไม่ได้ค่อยส่งให้ AI อ่านตัวเลขใต้บาร์โค้ด
 var FORMATS = ['EAN_13', 'EAN_8', 'UPC_A', 'UPC_E', 'CODE_128', 'CODE_39', 'ITF', 'QR_CODE'];
 function scanFormats() {
   if (!window.Html5QrcodeSupportedFormats) return undefined;
   return FORMATS.map(function (f) { return Html5QrcodeSupportedFormats[f]; }).filter(function (x) { return x !== undefined; });
 }
-function onScanned(text) {
-  stopScan();
+function bcStatus(html, cls) {
+  var el = $('bcStatus');
+  el.className = 'status' + (cls ? ' ' + cls : '') + (html ? '' : ' hidden');
+  el.innerHTML = html || '';
+}
+function onScanned(text, warn) {
   $('fBarcode').value = String(text).trim();
   lookup();
   if (navigator.vibrate) navigator.vibrate(80);
+  bcStatus(warn ? '⚠️ ' + warn : '', warn ? 'bad' : '');
   $('fQty').focus();
 }
-function toggleScan() {
-  if (S.scanner) { stopScan(); return; }
-  if (!window.Html5Qrcode) { $('scanFile').click(); return; }
-  $('reader').classList.remove('hidden');
-  $('scanBtn').textContent = '✕ ปิด';
-  S.scanner = new Html5Qrcode('reader', { formatsToSupport: scanFormats(), experimentalFeatures: { useBarCodeDetectorIfSupported: true }, verbose: false });
-  S.scanner.start({ facingMode: 'environment' }, { fps: 12, qrbox: function (w, h) { return { width: Math.floor(w * 0.85), height: Math.floor(Math.min(h, w) * 0.45) }; } },
-    onScanned, function () {})
-    .catch(function () {
-      // เปิดกล้องสดไม่ได้ (บางเครื่อง/บางเบราว์เซอร์) → ใช้วิธีถ่ายรูปแทน
-      stopScan();
-      toast('เปิดกล้องสดไม่ได้ — ใช้ถ่ายรูปบาร์โค้ดแทน');
-      $('scanFile').click();
-    });
-}
-function stopScan() {
-  var sc = S.scanner;
-  S.scanner = null;
-  $('reader').classList.add('hidden');
-  $('scanBtn').textContent = '📷 สแกน';
-  if (sc) { try { sc.stop().then(function () { sc.clear(); }).catch(function () {}); } catch (e) {} }
+function decodeLocal(file) {
+  var p = Promise.reject(new Error('no detector'));
+  if ('BarcodeDetector' in window) {          // Android Chrome: เร็วและแม่น
+    p = createImageBitmap(file)
+      .then(function (bmp) { return new BarcodeDetector().detect(bmp); })
+      .then(function (codes) { if (!codes.length) throw new Error('not found'); return codes[0].rawValue; });
+  }
+  return p.catch(function () {                 // iPhone และเครื่องอื่น
+    if (!window.Html5Qrcode) throw new Error('no library');
+    return new Html5Qrcode('reader', { formatsToSupport: scanFormats(), verbose: false }).scanFile(file, false);
+  });
 }
 $('scanFile').addEventListener('change', function () {
   var f = this.files[0];
   this.value = '';
-  if (!f || !window.Html5Qrcode) return;
-  var tmp = new Html5Qrcode('reader', { formatsToSupport: scanFormats(), verbose: false });
-  tmp.scanFile(f, false).then(onScanned).catch(function () { toast('อ่านบาร์โค้ดจากรูปไม่ได้ ลองถ่ายใหม่ให้ชัดขึ้น หรือพิมพ์เอง', true); });
+  if (!f) return;
+  bcStatus('<div class="spin"></div> กำลังอ่านบาร์โค้ด…');
+  decodeLocal(f).then(function (code) {
+    onScanned(code);
+  }).catch(function () {
+    bcStatus('<div class="spin"></div> ให้ AI อ่านตัวเลขใต้บาร์โค้ด…');
+    return resizeImage(f, 1600)
+      .then(function (dataUrl) { return call('apiReadBarcode', dataUrl.split(',')[1], 'image/jpeg'); })
+      .then(function (r) {
+        if (!r.barcode) throw new Error('อ่านบาร์โค้ดจากรูปไม่ได้ ลองถ่ายใหม่ให้เห็นตัวเลขใต้บาร์โค้ดชัด ๆ หรือพิมพ์เอง');
+        onScanned(r.barcode, r.checksumOk ? '' : 'AI อ่านได้ ' + r.barcode + ' แต่เลขอาจผิด ตรวจกับตัวเลขใต้บาร์โค้ดอีกครั้ง');
+      });
+  }).catch(function (e) {
+    bcStatus('✗ ' + esc(e.message), 'bad');
+  });
 });
+function stopScan() {}
 
 // ── ถ่ายรูปฉลาก → AI ──
 function resizeImage(file, maxSide) {
@@ -613,6 +626,7 @@ function resetForm() {
   ['hMfg', 'hExp'].forEach(function (id) { $(id).textContent = ''; });
   $('prodBox').innerHTML = '';
   $('sugg').classList.add('hidden');
+  bcStatus('');
   $('thumbs').innerHTML = '';
   $('aiStatus').className = 'status hidden';
   $('editBanner').classList.add('hidden');
