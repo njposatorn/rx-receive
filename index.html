@@ -543,7 +543,7 @@ $('scanFile').addEventListener('change', function () {
     onScanned(code);
   }).catch(function () {
     bcStatus('<div class="spin"></div> ให้ AI อ่านตัวเลขใต้บาร์โค้ด…');
-    return resizeImage(f, 1280)
+    return resizeImage(f, 1024)
       .then(function (dataUrl) { return call('apiReadBarcode', dataUrl.split(',')[1], 'image/jpeg'); })
       .then(function (r) {
         if (!r.barcode) throw new Error('อ่านบาร์โค้ดจากรูปไม่ได้ ลองถ่ายใหม่ให้เห็นตัวเลขใต้บาร์โค้ดชัด ๆ หรือพิมพ์เอง');
@@ -583,7 +583,7 @@ $('labelFile').addEventListener('change', function () {
   this.value = '';
   if (!f) return;
   aiStatus('<div class="spin"></div> AI กำลังอ่านฉลาก…');
-  resizeImage(f, 1280).then(function (dataUrl) {
+  resizeImage(f, 1024).then(function (dataUrl) {
     var im = document.createElement('img');
     im.src = dataUrl;
     $('thumbs').appendChild(im);
