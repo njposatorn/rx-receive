@@ -70,7 +70,9 @@ input.in.err{border-color:var(--bad);background:var(--bad-soft)}
 .link{background:none;border:0;color:var(--primary);font-weight:700;text-decoration:underline;cursor:pointer;padding:0}
 
 #reader{margin-top:10px;border-radius:10px;overflow:hidden;background:#000}
-.scan-btn{position:relative;display:flex;align-items:center}
+.scan-btn{position:relative;display:flex;align-items:center;justify-content:center}
+.scan-row{margin-top:8px}
+.scan-row .btn{width:100%}
 .scan-btn input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}
 .sugg{border:1.5px solid var(--line);border-radius:10px;margin-top:6px;overflow:hidden}
 .sugg button{display:block;width:100%;text-align:left;background:#fff;border:0;border-bottom:1px solid var(--line);padding:9px 12px;cursor:pointer}
@@ -157,14 +159,16 @@ input.in.err{border-color:var(--bad);background:var(--bad-soft)}
 
     <div class="card">
       <h3>1. บาร์โค้ด</h3>
-      <div class="row">
-        <input class="in grow" id="fBarcode" placeholder="ยิง/พิมพ์บาร์โค้ด หรือพิมพ์ชื่อยาเพื่อค้นหา" autocomplete="off" enterkeyhint="done">
-        <label class="btn p scan-btn" id="scanBtn">📷 ถ่าย
+      <input class="in" id="fBarcode" placeholder="ยิง/พิมพ์บาร์โค้ด หรือพิมพ์ชื่อยาเพื่อค้นหา" autocomplete="off" enterkeyhint="done">
+      <div class="g2 scan-row">
+        <button class="btn p" id="liveBtn" onclick="toggleLive()">🔍 สแกนสด</button>
+        <label class="btn ghost scan-btn" id="scanBtn">📷 ถ่ายรูป
           <input type="file" id="scanFile" accept="image/*" capture="environment">
         </label>
       </div>
       <div id="bcStatus" class="status hidden"></div>
       <div id="reader" class="hidden"></div>
+      <div id="readerFile" class="hidden"></div>
       <div id="sugg" class="sugg hidden"></div>
       <div id="prodBox"></div>
     </div>
@@ -531,13 +535,14 @@ function decodeLocal(file) {
   }
   return p.catch(function () {                 // iPhone และเครื่องอื่น
     if (!window.Html5Qrcode) throw new Error('no library');
-    return new Html5Qrcode('reader', { formatsToSupport: scanFormats(), verbose: false }).scanFile(file, false);
+    return new Html5Qrcode('readerFile', { formatsToSupport: scanFormats(), verbose: false }).scanFile(file, false);
   });
 }
 $('scanFile').addEventListener('change', function () {
   var f = this.files[0];
   this.value = '';
   if (!f) return;
+  stopScan();
   bcStatus('<div class="spin"></div> กำลังอ่านบาร์โค้ด…');
   decodeLocal(f).then(function (code) {
     onScanned(code);
@@ -553,7 +558,43 @@ $('scanFile').addEventListener('change', function () {
     bcStatus('✗ ' + esc(e.message), 'bad');
   });
 });
-function stopScan() {}
+// ── สแกนสดด้วยกล้องในแอป ──
+// ขอกล้องหลังความละเอียดสูง + โฟกัสอัตโนมัติต่อเนื่อง (ถ้าเครื่องรองรับ) ช่วยให้อ่านบาร์โค้ดเล็ก ๆ ได้
+function toggleLive() {
+  if (S.scanner) return stopScan();
+  if (!window.Html5Qrcode) return toast('โหลดตัวสแกนไม่ได้ — ใช้ปุ่มถ่ายรูปแทน', true);
+  bcStatus('');
+  $('reader').classList.remove('hidden');
+  $('liveBtn').textContent = '✕ ปิดกล้อง';
+  var sc = new Html5Qrcode('reader', {
+    formatsToSupport: scanFormats(), verbose: false,
+    experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+  });
+  S.scanner = sc;
+  sc.start({ facingMode: 'environment' }, {
+    fps: 15,
+    qrbox: function (w, h) { return { width: Math.floor(w * 0.9), height: Math.floor(Math.min(h, w) * 0.5) }; },
+    videoConstraints: {
+      facingMode: 'environment',
+      width: { ideal: 1920 }, height: { ideal: 1080 },
+      advanced: [{ focusMode: 'continuous' }]
+    }
+  }, function (text) {
+    stopScan();
+    onScanned(text);
+  }, function () { /* ยังไม่เจอบาร์โค้ด — สแกนต่อ */ })
+    .catch(function () {
+      stopScan();
+      toast('เปิดกล้องไม่ได้ — อนุญาตให้ใช้กล้อง หรือใช้ปุ่มถ่ายรูปแทน', true);
+    });
+}
+function stopScan() {
+  var sc = S.scanner;
+  S.scanner = null;
+  $('reader').classList.add('hidden');
+  $('liveBtn').textContent = '🔍 สแกนสด';
+  if (sc) { try { sc.stop().then(function () { sc.clear(); }).catch(function () {}); } catch (e) { /* ปิดไปแล้ว */ } }
+}
 
 // ── ถ่ายรูปฉลาก → AI ──
 function resizeImage(file, maxSide) {
