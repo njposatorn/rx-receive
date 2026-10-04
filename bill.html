@@ -131,7 +131,7 @@ details summary{cursor:pointer;font-weight:700;color:var(--ok);margin-top:10px}
       <button class="btn p" id="saveMapBtn" onclick="saveMap()">💾 จำคู่ที่ติ๊กไว้</button>
       <button class="btn line" id="resaveBtn" onclick="saveReport()">📄 บันทึกผลตรวจใหม่</button>
     </div>
-    <div class="hint" style="margin-top:6px">ติ๊ก "จำคู่นี้" เฉพาะคู่ที่ถูกต้อง — ครั้งต่อไปจะจับคู่ให้เองทันที · ถ้าแก้คู่หรือตัวคูณ กด "บันทึกผลตรวจใหม่" เพื่ออัปเดตไฟล์ใน Drive</div>
+    <div class="hint" style="margin-top:6px">ติ๊ก "จำคู่นี้" เฉพาะคู่ที่ถูกต้อง — ครั้งต่อไปจะจับคู่ให้เองทันที · ถ้าแก้คู่หรือตัวคูณ กด "บันทึกผลตรวจใหม่" เพื่ออัปเดตไฟล์ใน Drive และคอลัมน์ N ในชีต</div>
   </div>
 </main>
 <div class="toast" id="toast"></div>
@@ -601,10 +601,33 @@ function saveReport() {
   return api('apiSaveBillReport', rep).then(function (f) {
     ST.reportFile = f; ST.dirty = false;
     renderSaved();
-    toast('✓ บันทึกผลตรวจลง Drive แล้ว');
+    var notes = sheetNotes();
+    if (!notes.length) return toast('✓ บันทึกผลตรวจลง Drive แล้ว');
+    return api('apiWriteBillNotes', notes).then(function () {
+      toast('✓ บันทึกผลตรวจลง Drive และคอลัมน์ N ในชีตลงรับเข้าแล้ว');
+    }).catch(function (e) { toast('เขียนผลลงชีตไม่สำเร็จ: ' + e.message, true); });
   }).catch(function (e) {
     toast('บันทึกผลตรวจไม่สำเร็จ: ' + e.message, true);
   }).then(function () { $('resaveBtn').disabled = false; });
+}
+/** ผลย่อรายแถวสำหรับคอลัมน์ N ของแท็บลงรับเข้า — เฉพาะเมื่อเทียบกับรายการที่กำลังรับเข้า */
+function sheetNotes() {
+  if (ST.srcKey !== 'current') return [];
+  var notes = [];
+  ST.bills.forEach(function (b) {
+    if (b.group < 0) return;
+    var R = billResult(b);
+    var label = (SUPPLIER_LABEL[b.supplier] || b.supplierName || 'บิล') + ' ' + b.billNo;
+    R.items.forEach(function (x) {
+      if (!x.r || !x.r.id) return;
+      var no = ' #' + (x.p.line.no || x.p.i + 1);
+      notes.push({ id: x.r.id, note: x.ev.cls === 'ok' ? '🟢 ตรง · ' + label + no : '🟠 ' + x.ev.text + ' · ' + label + no });
+    });
+    R.extra.forEach(function (x) {
+      if (x.r.id) notes.push({ id: x.r.id, note: '🔵 ไม่มีในบิล ' + label + ' — อาจเป็นของบิลอื่น ของแถม หรือบันทึกซ้ำ' });
+    });
+  });
+  return notes;
 }
 function renderSaved() {
   var f = ST.reportFile;
