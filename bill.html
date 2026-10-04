@@ -350,10 +350,27 @@ function run() {
 /** รวมหน้าที่เป็นบิลเดียวกัน (เลขที่บิลเดียวกัน) เรียงตามเลขหน้า */
 function groupPages(pages) {
   var byNo = {}, order = [];
+  var noNo = [];
   pages.forEach(function (p) {
-    var k = String(p.billNo || p.file).replace(/\s+/g, '');
+    if (!String(p.billNo || '').trim()) { noNo.push(p); return; }
+    var k = String(p.billNo).replace(/\s+/g, '');
     if (!byNo[k]) { byNo[k] = []; order.push(k); }
     byNo[k].push(p);
+  });
+  // หน้าที่อ่านเลขที่บิลไม่ออก → รวมเข้ากับบิลบริษัทเดียวกันที่ยังได้หน้าไม่ครบ (หรือมีบิลเดียวของบริษัทนั้น)
+  noNo.forEach(function (p) {
+    var sup = supplierKey(p.supplier);
+    function isShort(k) {
+      var m = String(byNo[k][0].page || '').match(/\/\s*(\d+)/);
+      return m && byNo[k].length < Number(m[1]);
+    }
+    var same = order.filter(function (k) { return supplierKey(byNo[k][0].supplier) === sup; });
+    var short = same.filter(isShort);
+    var anyShort = order.filter(isShort);
+    var target = short.length === 1 ? short[0] : (same.length === 1 ? same[0] : (anyShort.length === 1 ? anyShort[0] : null));
+    if (target) { if (!p.page) p.page = ''; byNo[target].push(p); return; }
+    var k = 'file:' + p.file;
+    byNo[k] = [p]; order.push(k);
   });
   return order.map(function (k) {
     var ps = byNo[k].sort(function (a, b) { return pageNo(a.page) - pageNo(b.page); });
@@ -363,10 +380,12 @@ function groupPages(pages) {
       (p.backorder || []).forEach(function (l) { back.push(l); });
       if (p.grandTotal !== null && p.grandTotal !== undefined) grand = p.grandTotal;
     });
-    var m = String(ps[ps.length - 1].page || '').match(/\/\s*(\d+)/);
+    var m = null;
+    ps.forEach(function (p) { m = String(p.page || '').match(/\/\s*(\d+)/) || m; });
+    var head = ps.filter(function (p) { return String(p.billNo || '').trim(); })[0] || ps[0];
     return {
-      billNo: ps[0].billNo || '(ไม่มีเลขที่)', date: ps[0].date || '', supplier: supplierKey(ps[0].supplier),
-      supplierName: ps[0].supplier || '', pagesRead: ps.length, pagesTotal: m ? Number(m[1]) : null,
+      billNo: head.billNo || '(ไม่มีเลขที่)', date: head.date || '', supplier: supplierKey(head.supplier),
+      supplierName: head.supplier || '', pagesRead: ps.length, pagesTotal: m ? Number(m[1]) : null,
       lines: lines, backorder: back, grand: grand,
       lineTotal: Math.round(lines.reduce(function (s, l) { return s + num(l.total); }, 0) * 100) / 100
     };
@@ -375,17 +394,26 @@ function groupPages(pages) {
 
 /** เลือกกลุ่มรายการที่ตรงกับแต่ละบิล — นับยอดเงินที่ตรงกันเป๊ะ */
 function assignGroups() {
-  var used = {};
-  ST.bills.slice().sort(function (a, b) { return b.lines.length - a.lines.length; }).forEach(function (b) {
-    var best = -1, bestScore = -1;
+  // ให้คะแนนทุกคู่ (บิล, กลุ่ม) = สัดส่วนบรรทัดที่ยอดเงินตรงกับรายการในกลุ่ม แล้วจับคู่ที่คะแนนสูงสุดก่อน
+  var pairs = [];
+  ST.bills.forEach(function (b, bi) {
+    b.group = -1;
     ST.groups.forEach(function (g, gi) {
-      if (used[gi]) return;
-      var score = b.lines.filter(function (l) { return g.some(function (r) { return r.price !== null && Math.abs(r.price - num(l.total)) < 0.005; }); }).length;
-      if (score > bestScore) { bestScore = score; best = gi; }
+      var hit = b.lines.filter(function (l) { return num(l.total) > 0 && g.some(function (r) { return r.price !== null && Math.abs(r.price - num(l.total)) < 0.005; }); }).length;
+      if (hit) pairs.push({ bi: bi, gi: gi, hit: hit, score: hit / Math.max(b.lines.length, g.length) });
     });
-    b.group = best;
-    if (best >= 0) used[best] = true;
   });
+  pairs.sort(function (a, b) { return b.score - a.score || b.hit - a.hit; });
+  var usedB = {}, usedG = {};
+  pairs.forEach(function (x) {
+    if (usedB[x.bi] || usedG[x.gi]) return;
+    usedB[x.bi] = usedG[x.gi] = true;
+    ST.bills[x.bi].group = x.gi;
+  });
+  // บิลที่ยังไม่มีกลุ่ม และเหลือกลุ่มว่างกลุ่มเดียว → ใช้กลุ่มนั้น
+  var freeG = ST.groups.map(function (g, gi) { return gi; }).filter(function (gi) { return !usedG[gi]; });
+  var freeB = ST.bills.filter(function (b) { return b.group < 0; });
+  if (freeB.length === 1 && freeG.length === 1) freeB[0].group = freeG[0];
 }
 
 /** จับคู่ 1 บิล: จำไว้ → ยอดเงินตรงเป๊ะ (มีตัวเดียว) → AI */
@@ -490,7 +518,7 @@ function render() {
     var problems = R.items.filter(function (x) { return x.ev.cls !== 'ok'; });
     var oks = R.items.filter(function (x) { return x.ev.cls === 'ok'; });
     var readOk = b.grand === null || Math.abs(b.grand - b.lineTotal) < 0.01;
-    var groupOpts = ST.groups.map(function (g, gi) {
+    var groupOpts = (b.group < 0 ? '<option value="-1" selected>— เลือกว่าเป็นบิลไหนในรายการรับเข้า —</option>' : '') + ST.groups.map(function (g, gi) {
       return '<option value="' + gi + '"' + (gi === b.group ? ' selected' : '') + '>บิล ' + (gi + 1) + ' ในรายการรับเข้า (' + g.length + ' รายการ · ' + money(rowsTotal(g)) + ')</option>';
     }).join('');
     return '<div class="card"><h2>' + esc(SUPPLIER_LABEL[b.supplier] || b.supplierName) + ' · ' + esc(b.billNo) + '</h2>' +
