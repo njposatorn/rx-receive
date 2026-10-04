@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="th">
 <head>
+<base target="_top">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>รับเข้ายา</title>
@@ -36,6 +37,7 @@ header{position:sticky;top:0;z-index:20;background:var(--primary);color:#fff;pad
 nav{display:flex;margin-top:8px}
 nav button{flex:1;background:none;border:0;color:rgba(255,255,255,.75);padding:10px 4px;font-weight:600;border-bottom:3px solid transparent;cursor:pointer}
 nav button.on{color:#fff;border-bottom-color:#fff}
+nav a{flex:1;color:rgba(255,255,255,.75);padding:10px 4px;font-weight:600;text-align:center;text-decoration:none;border-bottom:3px solid transparent}
 
 main{max-width:560px;margin:0 auto;padding:14px 16px}
 .card{background:var(--card);border-radius:var(--radius);padding:14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(22,35,58,.08)}
@@ -132,6 +134,7 @@ input.in.err{border-color:var(--bad);background:var(--bad-soft)}
     <button data-tab="form" class="on">➕ ลงรับเข้า</button>
     <button data-tab="list">📋 รายการ</button>
     <button data-tab="prod">🔎 สินค้า</button>
+    <a href="bill.html" id="billLink">🧾 ตรวจบิล</a>
   </nav>
 </header>
 
@@ -368,6 +371,7 @@ function esc(s) {
 // เปิดแอป: ถ้าเคยโหลดทะเบียนไว้ในเครื่อง → ใช้ได้ทันที แล้วดึงทะเบียน+รายการล่าสุดเบื้องหลัง
 //          ครั้งแรกบนเครื่องนี้ → แสดงหน้าโหลดจนได้ข้อมูล
 function start() {
+  if (window.google && google.script) $('billLink').classList.add('hidden');
   S.pin = lsGet('rx_pin') || '';
   qLoad();
   var cached = null;

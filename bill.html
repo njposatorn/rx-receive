@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ตรวจบิล</title>
+<meta name="theme-color" content="#0B7A76">
+<link rel="icon" href="icons/icon-192.png">
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="config.js"></script>
+<style>
+:root{
+  --bg:#F2F5F9; --card:#FFFFFF; --text:#16233A; --muted:#5F6F84; --line:#D5DDE8;
+  --primary:#0B7A76; --primary-soft:#E0F2F1;
+  --ok:#1E7B45; --ok-soft:#E4F4EA;
+  --warn:#A85A00; --warn-soft:#FFF2DF;
+  --bad:#B42318; --bad-soft:#FDE8E6;
+  --info:#1C5FD1; --info-soft:#E6EEFC;
+  --grey-soft:#EEF1F5;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:'Sarabun',system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:15px;line-height:1.45;padding-bottom:40px}
+button,input,select{font:inherit;color:inherit}
+.hidden{display:none!important}
+header{position:sticky;top:0;z-index:10;background:var(--primary);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:12px}
+header h1{font-size:19px;flex:1}
+header a{color:#fff;font-size:14px;text-decoration:none;background:rgba(255,255,255,.18);border-radius:99px;padding:3px 12px}
+main{max-width:900px;margin:0 auto;padding:14px 16px}
+.card{background:var(--card);border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(22,35,58,.08)}
+.card h2{font-size:16px;margin-bottom:8px}
+.hint{color:var(--muted);font-size:13px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.btn{border:0;border-radius:10px;padding:10px 16px;font-weight:700;cursor:pointer;text-align:center}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.p{background:var(--primary);color:#fff}
+.btn.ghost{background:var(--primary-soft);color:var(--primary)}
+.btn.line{background:#fff;border:1.5px solid var(--line)}
+.btn.big{width:100%;padding:13px;font-size:16px}
+.file{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:6px;overflow:hidden}
+.file input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+input.in,select.in{border:1.5px solid var(--line);border-radius:8px;padding:7px 9px;background:#fff;max-width:100%}
+select.in{width:100%}
+.status{margin-top:8px;font-size:14px;color:var(--muted)}
+.status.bad{color:var(--bad)}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--primary);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.chip{background:var(--grey-soft);border-radius:8px;padding:3px 10px;font-size:13px}
+.thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.thumb{position:relative}
+.thumb img{width:72px;height:96px;object-fit:cover;border-radius:8px;border:1px solid var(--line);display:block}
+.thumb button{position:absolute;top:-6px;right:-6px;width:24px;height:24px;border-radius:50%;border:0;background:var(--bad);color:#fff;font-weight:700;cursor:pointer;line-height:24px}
+.src label{display:flex;gap:8px;align-items:flex-start;padding:8px 10px;border:1.5px solid var(--line);border-radius:10px;margin-top:6px;cursor:pointer}
+.src label.on{border-color:var(--primary);background:var(--primary-soft)}
+.sum{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.sum div{border-radius:8px;padding:4px 10px;font-weight:700;font-size:13.5px}
+.s-ok{background:var(--ok-soft);color:var(--ok)}
+.s-warn{background:var(--warn-soft);color:var(--warn)}
+.s-bad{background:var(--bad-soft);color:var(--bad)}
+.s-info{background:var(--info-soft);color:var(--info)}
+.s-grey{background:var(--grey-soft);color:var(--muted)}
+.tot{font-size:14px;margin:4px 0}
+.tot b{font-variant-numeric:tabular-nums}
+.diff{color:var(--bad);font-weight:700}
+.item{border:1px solid var(--line);border-left:5px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:8px}
+.item.ok{border-left-color:var(--ok)}
+.item.warn{border-left-color:var(--warn);background:#FFFBF4}
+.item.bad{border-left-color:var(--bad);background:#FFF8F7}
+.item.info{border-left-color:var(--info);background:#F7F9FF}
+.item.grey{border-left-color:#B7C1CE;background:#FAFBFC}
+.item .res{font-weight:700;margin-bottom:4px}
+.item.bad .res{color:var(--bad)}
+.item.warn .res{color:var(--warn)}
+.item.info .res{color:var(--info)}
+.item.grey .res{color:var(--muted)}
+.item.ok .res{color:var(--ok)}
+.item .bl{font-size:14px}
+.item .sub{color:var(--muted);font-size:12.5px}
+.item .pick{display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap}
+.item .pick select{flex:1;min-width:200px}
+.tag{display:inline-block;border-radius:6px;padding:0 6px;font-size:12px;font-weight:700;white-space:nowrap}
+.t-mem{background:var(--ok-soft);color:var(--ok)}
+.t-amt{background:var(--info-soft);color:var(--info)}
+.t-ai{background:var(--warn-soft);color:var(--warn)}
+.t-man{background:var(--grey-soft);color:var(--muted)}
+input.fac{width:64px;text-align:right}
+details summary{cursor:pointer;font-weight:700;color:var(--ok);margin-top:10px}
+.saved{background:var(--ok-soft);color:var(--ok);border-radius:10px;padding:10px 12px;font-weight:600;font-size:14px}
+.saved a{color:var(--ok)}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--text);color:#fff;border-radius:10px;padding:10px 16px;font-weight:600;opacity:0;transition:.2s;pointer-events:none;max-width:92vw;text-align:center;z-index:50}
+.toast.show{opacity:1}
+.toast.bad{background:var(--bad)}
+</style>
+</head>
+<body>
+<header>
+  <h1>🧾 ตรวจบิล</h1>
+  <a href="./">← แอปรับเข้า</a>
+</header>
+<main>
+  <div class="card hidden" id="pinCard">
+    <h2>ใส่ PIN</h2>
+    <div class="row"><input class="in" id="pin" type="password" inputmode="numeric" placeholder="PIN"><button class="btn p" onclick="savePin()">ตกลง</button></div>
+  </div>
+
+  <div class="card">
+    <h2>1. เทียบกับรายการไหน</h2>
+    <div class="src" id="srcList"><div class="hint"><span class="spin"></span>กำลังโหลดรายการ…</div></div>
+    <div class="chips" id="groups"></div>
+  </div>
+
+  <div class="card">
+    <h2>2. รูปบิล (ทุกหน้า ทุกบิล)</h2>
+    <div class="g2">
+      <label class="btn ghost file">📸 ถ่ายรูป<input type="file" id="cam" accept="image/*" capture="environment"></label>
+      <label class="btn ghost file">🖼️ เลือกจากคลังภาพ<input type="file" id="gal" accept="image/*" multiple></label>
+    </div>
+    <div class="thumbs" id="thumbs"></div>
+    <div class="hint" style="margin-top:6px">ถ่ายให้เห็นทั้งตารางและยอดรวมท้ายบิล — บิลหลายหน้าให้ถ่ายครบทุกหน้า</div>
+    <button class="btn p big" style="margin-top:12px" id="runBtn" onclick="run()" disabled>🔍 ตรวจบิล</button>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div id="results"></div>
+
+  <div class="card hidden" id="actions">
+    <div id="savedBox"></div>
+    <div class="g2" style="margin-top:10px">
+      <button class="btn p" id="saveMapBtn" onclick="saveMap()">💾 จำคู่ที่ติ๊กไว้</button>
+      <button class="btn line" id="resaveBtn" onclick="saveReport()">📄 บันทึกผลตรวจใหม่</button>
+    </div>
+    <div class="hint" style="margin-top:6px">ติ๊ก "จำคู่นี้" เฉพาะคู่ที่ถูกต้อง — ครั้งต่อไปจะจับคู่ให้เองทันที · ถ้าแก้คู่หรือตัวคูณ กด "บันทึกผลตรวจใหม่" เพื่ออัปเดตไฟล์ใน Drive</div>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+var $ = function (id) { return document.getElementById(id); };
+var ST = { pin: '', sources: null, srcKey: 'current', excelRows: null, groups: [], files: [], bills: [], map: null, reportFile: null, dirty: false };
+
+function toast(msg, bad) {
+  var t = $('toast'); t.textContent = msg; t.className = 'toast show' + (bad ? ' bad' : '');
+  clearTimeout(t._h); t._h = setTimeout(function () { t.className = 'toast'; }, bad ? 5000 : 2500);
+}
+function esc(s) {
+  return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+function money(n) { return n === null || n === undefined || n === '' ? '-' : Number(n).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function num(v) { var n = Number(String(v === null || v === undefined ? '' : v).replace(/,/g, '')); return isFinite(n) ? n : 0; }
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ข้าม */ } }
+
+// ── เรียกเซิร์ฟเวอร์ — ลองซ้ำเมื่อผลหลุดกลางทาง ──
+function api(fn) {
+  var args = [ST.pin].concat(Array.prototype.slice.call(arguments, 1));
+  var body = JSON.stringify({ fn: fn, args: args });
+  function once() {
+    return fetch(window.RX_API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: body })
+      .then(function (r) { return r.text(); })
+      .then(function (t) { var j = JSON.parse(t); if (!j.ok) { var e = new Error(j.error); e.server = true; throw e; } return j.data; });
+  }
+  function attempt(n) {
+    return once().catch(function (e) {
+      if (e.server) {
+        if (/PIN_INVALID/.test(e.message)) { lsSet('rx_pin', ''); $('pinCard').classList.remove('hidden'); e.message = 'PIN ไม่ถูกต้อง'; }
+        throw e;
+      }
+      if (n >= 3) throw new Error('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ลองใหม่อีกครั้ง');
+      return new Promise(function (r) { setTimeout(r, 1500 * n); }).then(function () { return attempt(n + 1); });
+    });
+  }
+  return attempt(1);
+}
+
+// ── PIN (ใช้ร่วมกับแอปรับเข้า เพราะอยู่เว็บเดียวกัน) ──
+function savePin() { ST.pin = $('pin').value.trim(); lsSet('rx_pin', ST.pin); $('pinCard').classList.add('hidden'); loadSources(); }
+
+// ── 1. แหล่งรายการที่ใช้เทียบ ──
+var BILL_MARK = /บิลถัดไป\s*\d*/;
+function loadSources() {
+  $('srcList').innerHTML = '<div class="hint"><span class="spin"></span>กำลังโหลดรายการ…</div>';
+  api('apiBillSources').then(function (d) { ST.sources = d; renderSources(); })
+    .catch(function (e) { $('srcList').innerHTML = '<div class="status bad">โหลดไม่ได้: ' + esc(e.message) + ' <button class="btn line" onclick="loadSources()">ลองใหม่</button></div>'; });
+}
+function rowsTotal(rows) { return rows.reduce(function (s, r) { return s + (r.price || 0); }, 0); }
+function renderSources() {
+  var d = ST.sources || { current: [], batches: [] };
+  var opts = [{ key: 'current', title: '📋 รายการที่กำลังรับเข้า', sub: d.current.length + ' รายการ · ' + money(rowsTotal(d.current)) + ' บาท' }];
+  d.batches.forEach(function (b, i) { opts.push({ key: 'batch' + i, title: '📄 ' + b.fileName, sub: 'สร้างไฟล์แล้ว · ' + b.rows.length + ' รายการ · ' + money(rowsTotal(b.rows)) + ' บาท' }); });
+  opts.push({ key: 'excel', title: '💻 ไฟล์ Excel ในเครื่อง', sub: ST.excelRows ? ST.excelRows.length + ' รายการ' : 'สำหรับใช้บนคอม' });
+  if (ST.srcKey === 'current' && !d.current.length && d.batches.length) ST.srcKey = 'batch0';
+  $('srcList').innerHTML = opts.map(function (o) {
+    return '<label class="' + (o.key === ST.srcKey ? 'on' : '') + '"><input type="radio" name="src" value="' + o.key + '"' + (o.key === ST.srcKey ? ' checked' : '') +
+      ' onchange="pickSource(this.value)"><div><b>' + esc(o.title) + '</b><div class="hint">' + esc(o.sub) + '</div>' +
+      (o.key === 'excel' ? '<label class="btn line file" style="margin-top:6px;border:1.5px solid var(--line)">เลือกไฟล์ Excel<input type="file" id="xlsx" accept=".xlsx,.xls" onchange="readExcel(this)"></label>' : '') +
+      '</div></label>';
+  }).join('');
+  buildGroups();
+}
+function pickSource(k) { ST.srcKey = k; renderSources(); }
+function sourceRows() {
+  var d = ST.sources || { current: [], batches: [] };
+  if (ST.srcKey === 'current') return d.current;
+  if (ST.srcKey === 'excel') return ST.excelRows || [];
+  var b = d.batches[Number(ST.srcKey.replace('batch', ''))];
+  return b ? b.rows : [];
+}
+/** แบ่งรายการเป็นกลุ่มบิลตามคำว่า "บิลถัดไป" ในช่องชื่อสินค้าพิมพ์เอง */
+function buildGroups() {
+  var groups = [[]];
+  sourceRows().forEach(function (r) {
+    var manual = String(r.manual || '');
+    if (BILL_MARK.test(manual) && groups[groups.length - 1].length) groups.push([]);
+    var x = Object.assign({}, r, { manual: manual.replace(BILL_MARK, '').trim() });
+    groups[groups.length - 1].push(x);
+  });
+  ST.groups = groups.filter(function (g) { return g.length; });
+  $('groups').innerHTML = ST.groups.map(function (g, i) {
+    return '<span class="chip">บิล ' + (i + 1) + ': ' + g.length + ' รายการ · ' + money(rowsTotal(g)) + '</span>';
+  }).join('');
+  checkReady();
+}
+function readExcel(input) {
+  var f = input.files[0];
+  if (!f) return;
+  f.arrayBuffer().then(function (buf) {
+    var wb = XLSX.read(buf, { type: 'array' });
+    var ws = wb.Sheets['ลงรับเข้า'] || wb.Sheets[wb.SheetNames[0]];
+    var raw = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+    ST.excelRows = raw.slice(1).filter(function (r) { return r.some(function (v) { return String(v).trim(); }); }).map(function (r) {
+      return { seq: r[0], barcode: String(r[1] || ''), name: String(r[2] || ''), manual: String(r[3] || ''), unit: String(r[4] || ''),
+        pack: String(r[5] || ''), qty: num(r[6]), price: r[7] === '' ? null : num(r[7]) };
+    });
+    ST.excelName = f.name;
+    ST.srcKey = 'excel';
+    renderSources();
+  }).catch(function (e) { toast('อ่านไฟล์ Excel ไม่ได้: ' + e.message, true); });
+}
+
+// ── 2. รูปบิล ──
+function addFiles(list) {
+  Array.prototype.forEach.call(list, function (f) { ST.files.push({ file: f, url: URL.createObjectURL(f) }); });
+  renderThumbs();
+}
+$('cam').addEventListener('change', function () { addFiles(this.files); this.value = ''; });
+$('gal').addEventListener('change', function () { addFiles(this.files); this.value = ''; });
+function removeFile(i) { URL.revokeObjectURL(ST.files[i].url); ST.files.splice(i, 1); renderThumbs(); }
+function renderThumbs() {
+  $('thumbs').innerHTML = ST.files.map(function (x, i) {
+    return '<div class="thumb"><img src="' + x.url + '" alt=""><button onclick="removeFile(' + i + ')">×</button></div>';
+  }).join('');
+  checkReady();
+}
+function checkReady() { $('runBtn').disabled = !(ST.groups.length && ST.files.length); }
+
+function resizeImage(file, maxSide) {
+  return new Promise(function (resolve, reject) {
+    var img = new Image(), url = URL.createObjectURL(file);
+    img.onload = function () {
+      var s = Math.min(1, maxSide / Math.max(img.width, img.height));
+      var c = document.createElement('canvas');
+      c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.85).split(',')[1]);
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('เปิดรูปไม่ได้: ' + file.name)); };
+    img.src = url;
+  });
+}
+
+// ── ชื่อ/คีย์สำหรับจำคู่ ──
+function supplierKey(name) {
+  var s = String(name || '');
+  if (/หรรษา/.test(s)) return 'hansa';
+  if (/เมืองกาญ|mk\s*medical/i.test(s)) return 'mk';
+  return s.trim() || 'อื่น ๆ';
+}
+var SUPPLIER_LABEL = { hansa: 'หรรษา', mk: 'MK (เมืองกาญจน์)' };
+function normBillName(s) {
+  return String(s || '').replace(/\*[^*]*\*/g, ' ').replace(/\*.*$/, ' ').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+function billLineKey(line) { return line.code ? String(line.code).replace(/\s+/g, '').toUpperCase() : normBillName(line.name); }
+function bcKey(b) { var s = String(b || '').trim().toUpperCase(); return /^\d+$/.test(s) ? s.replace(/^0+/, '') : s; }
+function ourName(r) { return r.name || r.manual || r.barcode || '(ไม่มีชื่อ)'; }
+function pageNo(p) { var m = String(p || '').match(/(\d+)\s*\/\s*(\d+)/); return m ? Number(m[1]) : 0; }
+
+/** ตัวคูณจากจำนวน: เราบันทึก 36 ขวด / บิล 3 โหล → 12 ; เราบันทึก 1 ลัง / บิล 24 ถุง → 1/24 */
+function guessFactor(billQty, ourQty) {
+  var q = num(billQty), r = num(ourQty);
+  if (!(q > 0 && r > 0)) return 1;
+  if (Math.abs(r / q - Math.round(r / q)) < 1e-9) return Math.round(r / q);
+  if (Math.abs(q / r - Math.round(q / r)) < 1e-9) return 1 / Math.round(q / r);
+  return 1;
+}
+function fmtFactor(f) {
+  if (f >= 1 || !(f > 0)) return String(Math.round(f * 1000) / 1000);
+  var d = Math.round(1 / f);
+  return Math.abs(1 / d - f) < 1e-9 ? '1/' + d : String(Math.round(f * 10000) / 10000);
+}
+function parseFactor(v) {
+  var m = String(v).trim().match(/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/);
+  var f = m ? Number(m[1]) / Number(m[2]) : Number(v);
+  return f > 0 ? f : 1;
+}
+
+// ── 3. ตรวจ ──
+function status(html, bad) { $('status').className = 'status' + (bad ? ' bad' : ''); $('status').innerHTML = html; }
+
+function run() {
+  $('runBtn').disabled = true;
+  $('results').innerHTML = '';
+  $('actions').classList.add('hidden');
+  ST.reportFile = null;
+  var pages = [], done = 0, total = ST.files.length;
+  status('<span class="spin"></span>กำลังอ่านบิล 0/' + total + ' รูป…');
+  var mapP = api('apiGetBillMap').then(function (m) { ST.map = m; });
+  var queue = ST.files.slice();
+  function worker() {
+    var x = queue.shift();
+    if (!x) return Promise.resolve();
+    return resizeImage(x.file, 2000).then(function (b64) { return api('apiReadBill', b64, 'image/jpeg'); })
+      .then(function (d) { d.file = x.file.name; pages.push(d); })
+      .catch(function (e) { pages.push({ file: x.file.name, error: e.message, lines: [], backorder: [] }); })
+      .then(function () { done++; status('<span class="spin"></span>กำลังอ่านบิล ' + done + '/' + total + ' รูป…'); return worker(); });
+  }
+  Promise.all([worker(), worker(), mapP]).then(function () {
+    var failed = pages.filter(function (p) { return p.error; });
+    if (failed.length) toast('อ่านไม่ได้ ' + failed.length + ' รูป: ' + failed.map(function (p) { return p.error; }).join(', '), true);
+    ST.bills = groupPages(pages.filter(function (p) { return !p.error; }));
+    assignGroups();
+    status('<span class="spin"></span>กำลังจับคู่รายการ…');
+    return Promise.all(ST.bills.map(matchBill));
+  }).then(function () {
+    render();
+    status('<span class="spin"></span>กำลังบันทึกผลตรวจลง Drive…');
+    return saveReport();
+  }).then(function () {
+    status('ตรวจเสร็จ — ' + ST.bills.length + ' บิล');
+    if (window.innerWidth < 700) $('results').scrollIntoView({ behavior: 'smooth' });
+  }).catch(function (e) {
+    status('✗ ' + esc(e.message), true);
+  }).then(function () { $('runBtn').disabled = false; });
+}
+
+/** รวมหน้าที่เป็นบิลเดียวกัน (เลขที่บิลเดียวกัน) เรียงตามเลขหน้า */
+function groupPages(pages) {
+  var byNo = {}, order = [];
+  pages.forEach(function (p) {
+    var k = String(p.billNo || p.file).replace(/\s+/g, '');
+    if (!byNo[k]) { byNo[k] = []; order.push(k); }
+    byNo[k].push(p);
+  });
+  return order.map(function (k) {
+    var ps = byNo[k].sort(function (a, b) { return pageNo(a.page) - pageNo(b.page); });
+    var lines = [], back = [], grand = null;
+    ps.forEach(function (p) {
+      p.lines.forEach(function (l) { lines.push(l); });
+      (p.backorder || []).forEach(function (l) { back.push(l); });
+      if (p.grandTotal !== null && p.grandTotal !== undefined) grand = p.grandTotal;
+    });
+    var m = String(ps[ps.length - 1].page || '').match(/\/\s*(\d+)/);
+    return {
+      billNo: ps[0].billNo || '(ไม่มีเลขที่)', date: ps[0].date || '', supplier: supplierKey(ps[0].supplier),
+      supplierName: ps[0].supplier || '', pagesRead: ps.length, pagesTotal: m ? Number(m[1]) : null,
+      lines: lines, backorder: back, grand: grand,
+      lineTotal: Math.round(lines.reduce(function (s, l) { return s + num(l.total); }, 0) * 100) / 100
+    };
+  });
+}
+
+/** เลือกกลุ่มรายการที่ตรงกับแต่ละบิล — นับยอดเงินที่ตรงกันเป๊ะ */
+function assignGroups() {
+  var used = {};
+  ST.bills.slice().sort(function (a, b) { return b.lines.length - a.lines.length; }).forEach(function (b) {
+    var best = -1, bestScore = -1;
+    ST.groups.forEach(function (g, gi) {
+      if (used[gi]) return;
+      var score = b.lines.filter(function (l) { return g.some(function (r) { return r.price !== null && Math.abs(r.price - num(l.total)) < 0.005; }); }).length;
+      if (score > bestScore) { bestScore = score; best = gi; }
+    });
+    b.group = best;
+    if (best >= 0) used[best] = true;
+  });
+}
+
+/** จับคู่ 1 บิล: จำไว้ → ยอดเงินตรงเป๊ะ (มีตัวเดียว) → AI */
+function matchBill(b) {
+  b.pairs = b.lines.map(function (l, i) { return { i: i, line: l, row: null, factor: 1, src: '', conf: '', remember: false }; });
+  var rows = b.group >= 0 ? ST.groups[b.group] : [];
+  var taken = {};
+  var mem = {};
+  (ST.map || []).forEach(function (m) { if (m.supplier === b.supplier) mem[m.key] = m; });
+  b.pairs.forEach(function (p) {
+    var m = mem[billLineKey(p.line)];
+    if (!m) return;
+    var j = rows.findIndex(function (r, jj) {
+      return !taken[jj] && ((m.barcode && bcKey(r.barcode) === bcKey(m.barcode)) || (!m.barcode && ourName(r) === m.ourName));
+    });
+    if (j >= 0) { taken[j] = true; p.row = j; p.factor = m.factor || 1; p.src = 'mem'; }
+  });
+  b.pairs.forEach(function (p) {
+    if (p.row !== null) return;
+    var amt = num(p.line.total);
+    if (!(amt > 0)) return;
+    var sameBill = b.pairs.filter(function (q) { return q.row === null && Math.abs(num(q.line.total) - amt) < 0.005; });
+    var cand = rows.map(function (r, j) { return j; }).filter(function (j) { return !taken[j] && rows[j].price !== null && Math.abs(rows[j].price - amt) < 0.005; });
+    if (sameBill.length === 1 && cand.length === 1) {
+      var j = cand[0];
+      taken[j] = true; p.row = j; p.src = 'amt'; p.remember = true;
+      p.factor = guessFactor(p.line.qty, rows[j].qty);
+    }
+  });
+  var restLines = b.pairs.filter(function (p) { return p.row === null; });
+  var restRows = rows.map(function (r, j) { return j; }).filter(function (j) { return !taken[j]; });
+  if (!restLines.length || !restRows.length) return Promise.resolve();
+  return api('apiMatchBill',
+    restLines.map(function (p) { return { i: p.i, name: p.line.name, qty: p.line.qty, unit: p.line.unit, total: p.line.total }; }),
+    restRows.map(function (j) { var r = rows[j]; return { j: j, name: ourName(r) + (r.name && r.manual ? ' / ' + r.manual : ''), unit: r.unit, pack: r.pack, qty: r.qty, total: r.price }; })
+  ).then(function (ms) {
+    ms.forEach(function (m) {
+      var p = b.pairs[m.bill];
+      if (!p || p.row !== null || m.row === null || m.row === undefined || taken[m.row] || restRows.indexOf(m.row) < 0) return;
+      taken[m.row] = true; p.row = m.row; p.factor = m.factor || 1; p.src = 'ai'; p.conf = m.confidence;
+      p.remember = m.confidence === 'high';
+    });
+  }).catch(function (e) { toast('AI จับคู่ไม่สำเร็จ: ' + e.message + ' — เลือกคู่เองได้', true); });
+}
+
+// ── เปรียบเทียบ ──
+function evalPair(b, p) {
+  var rows = b.group >= 0 ? ST.groups[b.group] : [];
+  if (p.row === null) {
+    return num(p.line.total) === 0
+      ? { cls: 'grey', text: 'ราคา 0 และไม่มีในรายการรับเข้า (ของแถม/ลัง/ไม่ใช่สินค้า) — ตรวจเองถ้าเป็นสินค้า' }
+      : { cls: 'bad', text: 'มีในบิล แต่ไม่ได้บันทึกรับเข้า' };
+  }
+  var r = rows[p.row], bq = num(p.line.qty), expect = Math.round(bq * (p.factor || 1) * 1e6) / 1e6;
+  var bt = num(p.line.total), rt = r.price === null ? null : r.price;
+  var issues = [];
+  if (Math.abs(expect - r.qty) > 1e-6) issues.push('จำนวน: บิล ' + bq + ' ' + (p.line.unit || '') + (p.factor !== 1 ? ' (= ' + expect + ' ' + (r.unit || '') + ')' : '') + ' / รับเข้า ' + r.qty + ' ' + (r.unit || ''));
+  if (rt === null && bt > 0) issues.push('ไม่ได้กรอกราคา (บิล ' + money(bt) + ')');
+  else if (rt !== null && Math.abs(rt - bt) > 1) issues.push('ราคา: บิล ' + money(bt) + ' / รับเข้า ' + money(rt) + ' (ต่าง ' + money(rt - bt) + ')');
+  return issues.length ? { cls: 'warn', text: issues.join(' · ') } : { cls: 'ok', text: 'ตรง' };
+}
+var RES_LABEL = { ok: '✅ ตรง', warn: '🟠 ไม่ตรง', bad: '🔴 ไม่ได้บันทึกรับเข้า', info: '🔵 บันทึกรับเข้า แต่ไม่มีในบิล', grey: '⚪ ' };
+var SRC_TAG = {
+  mem: '<span class="tag t-mem">จำไว้</span>', amt: '<span class="tag t-amt">ยอดเงินตรง</span>',
+  ai: '<span class="tag t-ai">AI จับคู่</span>', man: '<span class="tag t-man">เลือกเอง</span>'
+};
+
+/** สรุปของ 1 บิล — ใช้ทั้งแสดงผลและทำไฟล์รายงาน */
+function billResult(b) {
+  var rows = b.group >= 0 ? ST.groups[b.group] : [];
+  var used = {};
+  b.pairs.forEach(function (p) { if (p.row !== null) used[p.row] = true; });
+  var items = b.pairs.map(function (p) { return { p: p, ev: evalPair(b, p), r: p.row !== null ? rows[p.row] : null }; });
+  var extra = rows.map(function (r, j) { return { r: r, j: j }; }).filter(function (x) { return !used[x.j]; });
+  var cnt = { ok: 0, warn: 0, bad: 0, grey: 0 };
+  items.forEach(function (x) { cnt[x.ev.cls]++; });
+  return { rows: rows, items: items, extra: extra, cnt: cnt, ourTotal: rowsTotal(rows) };
+}
+
+// ── แสดงผล ──
+function itemHtml(bi, b, x) {
+  var p = x.p, r = x.r, rows = b.group >= 0 ? ST.groups[b.group] : [];
+  var used = {};
+  b.pairs.forEach(function (q) { if (q.row !== null) used[q.row] = true; });
+  var opts = '<option value="">— ไม่มีในรายการรับเข้า —</option>' + rows.map(function (rr, j) {
+    if (used[j] && j !== p.row) return '';
+    return '<option value="' + j + '"' + (j === p.row ? ' selected' : '') + '>' + esc((rr.seq ? '#' + rr.seq + ' ' : '') + ourName(rr)) + ' · ' + rr.qty + ' ' + esc(rr.unit) + ' · ' + money(rr.price) + '</option>';
+  }).join('');
+  var res = x.ev.cls === 'ok' ? '✅ ตรง' : (x.ev.cls === 'grey' ? '⚪ ' : (x.ev.cls === 'bad' ? '🔴 ' : '🟠 ')) + esc(x.ev.text);
+  return '<div class="item ' + x.ev.cls + '"><div class="res">' + res + '</div>' +
+    '<div class="bl"><b>บิล #' + esc(p.line.no || p.i + 1) + '</b> ' + esc(p.line.name) + (p.line.code ? ' <span class="sub">' + esc(p.line.code) + '</span>' : '') + '</div>' +
+    '<div class="sub">' + esc(p.line.qty) + ' ' + esc(p.line.unit || '') + ' · ' + money(p.line.total) + ' บาท</div>' +
+    '<div class="pick"><select class="in" onchange="pickRow(' + bi + ',' + p.i + ',this.value)">' + opts + '</select>' + (p.src ? SRC_TAG[p.src] : '') + '</div>' +
+    (r ? '<div class="pick sub">รับเข้า ' + r.qty + ' ' + esc(r.unit) + ' · ' + money(r.price) + ' บาท · 1 ' + esc(p.line.unit || 'หน่วยในบิล') + ' = <input class="in fac" value="' + fmtFactor(p.factor) + '" onchange="setFactor(' + bi + ',' + p.i + ',this.value)"> ' + esc(r.unit || 'หน่วยของเรา') +
+      (p.src !== 'mem' ? ' · <label><input type="checkbox"' + (p.remember ? ' checked' : '') + ' onchange="setRemember(' + bi + ',' + p.i + ',this.checked)"> จำคู่นี้</label>' : '') + '</div>' : '') +
+    '</div>';
+}
+
+function render() {
+  $('results').innerHTML = ST.bills.map(function (b, bi) {
+    var R = billResult(b);
+    var problems = R.items.filter(function (x) { return x.ev.cls !== 'ok'; });
+    var oks = R.items.filter(function (x) { return x.ev.cls === 'ok'; });
+    var readOk = b.grand === null || Math.abs(b.grand - b.lineTotal) < 0.01;
+    var groupOpts = ST.groups.map(function (g, gi) {
+      return '<option value="' + gi + '"' + (gi === b.group ? ' selected' : '') + '>บิล ' + (gi + 1) + ' ในรายการรับเข้า (' + g.length + ' รายการ · ' + money(rowsTotal(g)) + ')</option>';
+    }).join('');
+    return '<div class="card"><h2>' + esc(SUPPLIER_LABEL[b.supplier] || b.supplierName) + ' · ' + esc(b.billNo) + '</h2>' +
+      '<div class="hint">' + esc(b.date) + ' · อ่านได้ ' + b.pagesRead + (b.pagesTotal ? '/' + b.pagesTotal : '') + ' หน้า</div>' +
+      (b.pagesTotal && b.pagesRead < b.pagesTotal ? '<div class="status bad">⚠️ ถ่ายมาไม่ครบทุกหน้า — รายการในหน้าที่ขาดจะไม่ถูกตรวจ</div>' : '') +
+      '<div style="margin:8px 0"><select class="in" onchange="setGroup(' + bi + ',this.value)">' + groupOpts + '</select></div>' +
+      '<div class="tot">ยอดท้ายบิล <b>' + money(b.grand) + '</b> ' + (readOk ? '' : '<span class="diff">⚠️ รวมบรรทัดที่อ่านได้ ' + money(b.lineTotal) + ' ไม่เท่ายอดท้ายบิล — ถ่ายใหม่ให้ชัด</span>') + '</div>' +
+      '<div class="tot">ยอดที่บันทึกรับเข้า <b>' + money(R.ourTotal) + '</b> ' + (b.grand !== null && Math.abs(R.ourTotal - b.grand) > 1 ? '<span class="diff">ต่าง ' + money(R.ourTotal - b.grand) + '</span>' : '✅') + '</div>' +
+      '<div class="sum"><div class="s-ok">✅ ' + R.cnt.ok + '</div><div class="s-warn">🟠 ' + R.cnt.warn + '</div><div class="s-bad">🔴 ' + R.cnt.bad + '</div><div class="s-info">🔵 ' + R.extra.length + '</div><div class="s-grey">⚪ ' + (b.backorder.length + R.cnt.grey) + '</div></div>' +
+      problems.map(function (x) { return itemHtml(bi, b, x); }).join('') +
+      R.extra.map(function (x) {
+        return '<div class="item info"><div class="res">🔵 บันทึกรับเข้า แต่ไม่มีในบิลนี้</div><div class="bl">' + esc((x.r.seq ? '#' + x.r.seq + ' ' : '') + ourName(x.r)) + '</div><div class="sub">' + x.r.qty + ' ' + esc(x.r.unit) + ' · ' + money(x.r.price) + ' บาท</div></div>';
+      }).join('') +
+      b.backorder.map(function (l) {
+        return '<div class="item grey"><div class="res">⚪ สินค้าขาดส่ง — บริษัทไม่ได้ส่งมา</div><div class="bl">' + esc(l.name) + '</div><div class="sub">' + esc(l.qty) + ' ' + esc(l.unit || '') + '</div></div>';
+      }).join('') +
+      (!problems.length && !R.extra.length ? '<div class="saved" style="margin-top:8px">✅ ทุกรายการตรงกับบิล</div>' : '') +
+      (oks.length ? '<details><summary>✅ รายการที่ตรง ' + oks.length + ' รายการ (แตะเพื่อดู)</summary>' + oks.map(function (x) { return itemHtml(bi, b, x); }).join('') + '</details>' : '') +
+      '</div>';
+  }).join('') || '<div class="card">ไม่มีบิลที่อ่านได้</div>';
+  $('actions').classList.toggle('hidden', !ST.bills.length);
+  renderSaved();
+}
+function changed() { ST.dirty = true; render(); }
+function pickRow(bi, i, v) {
+  var b = ST.bills[bi], p = b.pairs[i];
+  p.row = v === '' ? null : Number(v);
+  p.src = p.row === null ? '' : 'man';
+  p.remember = p.row !== null;
+  if (p.row !== null) p.factor = guessFactor(p.line.qty, ST.groups[b.group][p.row].qty);
+  changed();
+}
+function setFactor(bi, i, v) { var p = ST.bills[bi].pairs[i]; p.factor = parseFactor(v); if (p.src === 'mem') { p.src = 'man'; p.remember = true; } changed(); }
+function setRemember(bi, i, on) { ST.bills[bi].pairs[i].remember = on; }
+function setGroup(bi, gi) {
+  var b = ST.bills[bi];
+  b.group = Number(gi);
+  status('<span class="spin"></span>กำลังจับคู่ใหม่…');
+  matchBill(b).then(function () { status('จับคู่ใหม่แล้ว'); changed(); });
+}
+
+// ── บันทึกผลตรวจลง Drive (ไฟล์ Excel) ──
+function sourceLabel() {
+  if (ST.srcKey === 'current') return 'รายการที่กำลังรับเข้า';
+  if (ST.srcKey === 'excel') return ST.excelName || 'ไฟล์ Excel';
+  var b = ST.sources.batches[Number(ST.srcKey.replace('batch', ''))];
+  return b ? b.fileName : '';
+}
+function buildReport() {
+  var summary = [['บิล', 'เลขที่', 'วันที่', 'ยอดท้ายบิล', 'ยอดรับเข้า', 'ต่าง', 'ตรง', 'ไม่ตรง', 'ไม่ได้บันทึก', 'เกินมา', 'ขาดส่ง']];
+  var detail = [['ผล', 'เลขที่บิล', '#', 'รหัส', 'รายการในบิล', 'จำนวน(บิล)', 'จำนวนเงิน(บิล)', 'ลำดับรับเข้า', 'รายการที่บันทึกรับเข้า', 'จำนวน(รับเข้า)', 'ราคา(รับเข้า)', 'รายละเอียด']];
+  var order = { bad: 0, warn: 1, info: 2, grey: 3, ok: 4 };
+  var all = [];
+  ST.bills.forEach(function (b) {
+    var R = billResult(b);
+    summary.push([SUPPLIER_LABEL[b.supplier] || b.supplierName, b.billNo, b.date, b.grand, R.ourTotal,
+      b.grand === null ? '' : Math.round((R.ourTotal - b.grand) * 100) / 100, R.cnt.ok, R.cnt.warn, R.cnt.bad, R.extra.length, b.backorder.length]);
+    R.items.forEach(function (x) {
+      all.push({ o: order[x.ev.cls], row: [x.ev.cls === 'grey' ? '⚪ ราคา 0' : RES_LABEL[x.ev.cls], b.billNo, x.p.line.no || x.p.i + 1, x.p.line.code || '', x.p.line.name,
+        (x.p.line.qty || '') + ' ' + (x.p.line.unit || ''), num(x.p.line.total), x.r ? x.r.seq : '', x.r ? ourName(x.r) : '',
+        x.r ? x.r.qty + ' ' + (x.r.unit || '') : '', x.r && x.r.price !== null ? x.r.price : '', x.ev.cls === 'ok' ? '' : x.ev.text] });
+    });
+    R.extra.forEach(function (x) {
+      all.push({ o: order.info, row: [RES_LABEL.info, b.billNo, '', '', '', '', '', x.r.seq, ourName(x.r), x.r.qty + ' ' + (x.r.unit || ''), x.r.price === null ? '' : x.r.price, 'อาจเป็นของบิลอื่น ของแถม หรือบันทึกซ้ำ'] });
+    });
+    b.backorder.forEach(function (l) {
+      all.push({ o: order.grey, row: ['⚪ ขาดส่ง', b.billNo, '', l.code || '', l.name, (l.qty || '') + ' ' + (l.unit || ''), '', '', '', '', '', 'บริษัทไม่ได้ส่งมา'] });
+    });
+  });
+  all.sort(function (a, b) { return a.o - b.o; }).forEach(function (x) { detail.push(x.row); });
+  summary.push([]);
+  summary.push(['เทียบกับ', sourceLabel()]);
+  var name = ST.bills.map(function (b) { return (SUPPLIER_LABEL[b.supplier] ? b.supplier.toUpperCase() : 'บิล') + '-' + b.billNo; }).join('_');
+  return { name: name, summary: summary, detail: detail };
+}
+function saveReport() {
+  var rep = buildReport();
+  if (ST.reportFile) rep.replaceId = ST.reportFile.fileId;
+  $('resaveBtn').disabled = true;
+  return api('apiSaveBillReport', rep).then(function (f) {
+    ST.reportFile = f; ST.dirty = false;
+    renderSaved();
+    toast('✓ บันทึกผลตรวจลง Drive แล้ว');
+  }).catch(function (e) {
+    toast('บันทึกผลตรวจไม่สำเร็จ: ' + e.message, true);
+  }).then(function () { $('resaveBtn').disabled = false; });
+}
+function renderSaved() {
+  var f = ST.reportFile;
+  $('savedBox').innerHTML = f
+    ? '<div class="saved">📄 บันทึกผลตรวจแล้ว: ' + esc(f.fileName) + '<br><span class="hint">อยู่ในโฟลเดอร์ ไฟล์รับเข้ายา › ผลตรวจบิล ใน Google Drive</span>' +
+      (ST.dirty ? '<br><span class="diff">มีการแก้ไขหลังบันทึก — กด "บันทึกผลตรวจใหม่"</span>' : '') + '</div>'
+    : '';
+}
+
+// ── จำคู่ ──
+function saveMap() {
+  var entries = [];
+  ST.bills.forEach(function (b) {
+    var rows = ST.groups[b.group] || [];
+    b.pairs.forEach(function (p) {
+      if (!p.remember || p.row === null || p.src === 'mem') return;
+      var r = rows[p.row];
+      entries.push({ supplier: b.supplier, key: billLineKey(p.line), billName: p.line.name, barcode: r.barcode, ourName: ourName(r), billUnit: p.line.unit || '', ourUnit: r.unit, factor: p.factor || 1 });
+    });
+  });
+  if (!entries.length) return toast('ไม่มีคู่ที่ติ๊กให้จำ');
+  $('saveMapBtn').disabled = true;
+  api('apiSaveBillMap', entries).then(function (n) {
+    toast('✓ จำแล้ว ' + n + ' คู่ — ครั้งหน้าจะจับคู่ให้เอง');
+    ST.bills.forEach(function (b) { b.pairs.forEach(function (p) { if (p.remember && p.row !== null) p.src = 'mem'; }); });
+    render();
+  }).catch(function (e) { toast(e.message, true); }).then(function () { $('saveMapBtn').disabled = false; });
+}
+
+// ── เริ่ม ──
+ST.pin = lsGet('rx_pin') || '';
+if (ST.pin) loadSources(); else { $('pinCard').classList.remove('hidden'); $('srcList').innerHTML = '<div class="hint">ใส่ PIN ก่อน</div>'; }
+</script>
+</body>
+</html>
