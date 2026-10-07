@@ -233,7 +233,8 @@ function readExcel(input) {
     var raw = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
     ST.excelRows = raw.slice(1).filter(function (r) { return r.some(function (v) { return String(v).trim(); }); }).map(function (r) {
       return { seq: r[0], barcode: String(r[1] || ''), name: String(r[2] || ''), manual: String(r[3] || ''), unit: String(r[4] || ''),
-        pack: String(r[5] || ''), qty: num(r[6]), price: r[7] === '' ? null : num(r[7]) };
+        pack: String(r[5] || ''), qty: num(r[6]), price: r[7] === '' ? null : num(r[7]),
+        lot: String(r[8] || '').replace(/\s+/g, ''), mfg: String(r[9] || ''), exp: String(r[10] || '') };
     });
     ST.excelName = f.name;
     ST.srcKey = 'excel';
@@ -278,9 +279,10 @@ function supplierKey(name) {
   var s = String(name || '');
   if (/หรรษา/.test(s)) return 'hansa';
   if (/เมืองกาญ|mk\s*medical/i.test(s)) return 'mk';
+  if (/ที\s*\.?\s*เอ็น\s*\.?\s*พี|t\s*\.?\s*n\s*\.?\s*p\s*\.?\s*health/i.test(s)) return 'tnp';
   return s.trim() || 'อื่น ๆ';
 }
-var SUPPLIER_LABEL = { hansa: 'หรรษา', mk: 'MK (เมืองกาญจน์)' };
+var SUPPLIER_LABEL = { hansa: 'หรรษา', mk: 'MK (เมืองกาญจน์)', tnp: 'ที เอ็น พี เฮลท์แคร์' };
 function normBillName(s) {
   return String(s || '').replace(/\*[^*]*\*/g, ' ').replace(/\*.*$/, ' ').toLowerCase().replace(/\s+/g, ' ').trim();
 }
@@ -374,22 +376,55 @@ function groupPages(pages) {
   });
   return order.map(function (k) {
     var ps = byNo[k].sort(function (a, b) { return pageNo(a.page) - pageNo(b.page); });
-    var lines = [], back = [], grand = null;
+    var lines = [], back = [], grand = null, subtotal = null, discount = null;
     ps.forEach(function (p) {
       p.lines.forEach(function (l) { lines.push(l); });
       (p.backorder || []).forEach(function (l) { back.push(l); });
       if (p.grandTotal !== null && p.grandTotal !== undefined) grand = p.grandTotal;
+      if (p.subtotal !== null && p.subtotal !== undefined) subtotal = p.subtotal;
+      if (p.discount) discount = p.discount;
     });
+    // บิลที่พิมพ์ Lot ทุกบรรทัด: บรรทัดที่ไม่มียอดเงินและไม่มี Lot = สินค้าขาดส่ง (เช่นใต้ข้อความ "ขอแจ้งสินค้าขาดสต็อก")
+    var hasLots = lines.some(function (l) { return l.lot; });
+    lines = lines.filter(function (l) {
+      var none = hasLots && !num(l.total) && !l.lot && !l.price;
+      if (none) back.push(l);
+      return !none;
+    });
+    lines = mergeLines(lines);
     var m = null;
     ps.forEach(function (p) { m = String(p.page || '').match(/\/\s*(\d+)/) || m; });
     var head = ps.filter(function (p) { return String(p.billNo || '').trim(); })[0] || ps[0];
     return {
       billNo: head.billNo || '(ไม่มีเลขที่)', date: head.date || '', supplier: supplierKey(head.supplier),
       supplierName: head.supplier || '', pagesRead: ps.length, pagesTotal: m ? Number(m[1]) : null,
-      lines: lines, backorder: back, grand: grand,
+      lines: lines, backorder: back, grand: grand, subtotal: discount ? subtotal : null, discount: discount,
       lineTotal: Math.round(lines.reduce(function (s, l) { return s + num(l.total); }, 0) * 100) / 100
     };
   });
+}
+
+/**
+ * รวมบรรทัดสินค้าเดียวกันในบิลเดียวกัน (รหัสสินค้าเดียวกัน) เช่น บรรทัดที่ซื้อ + บรรทัดของแถม (สินค้าฟรี)
+ * → จำนวนรวม ยอดเงินรวม และเก็บ Lot/MFG/EXP ทุกชุดไว้
+ */
+function mergeLines(lines) {
+  var out = [], byCode = {};
+  lines.forEach(function (l) {
+    var x = Object.assign({}, l, { freeQty: l.free ? num(l.qty) : 0, lots: [] });
+    if (l.lot || l.mfg || l.exp) x.lots.push({ lot: l.lot || '', mfg: l.mfg || '', exp: l.exp || '' });
+    var k = l.code ? String(l.code).replace(/\s+/g, '').toUpperCase() : '';
+    var y = k && byCode[k];
+    if (!y) { if (k) byCode[k] = x; out.push(x); return; }
+    y.qty = num(y.qty) + num(l.qty);
+    y.total = Math.round((num(y.total) + num(l.total)) * 100) / 100;
+    y.freeQty += x.freeQty;
+    if (y.free && !l.free) { y.free = false; y.price = l.price; y.no = l.no; }
+    x.lots.forEach(function (a) {
+      if (!y.lots.some(function (b) { return b.lot === a.lot && b.mfg === a.mfg && b.exp === a.exp; })) y.lots.push(a);
+    });
+  });
+  return out;
 }
 
 /** เลือกกลุ่มรายการที่ตรงกับแต่ละบิล — นับยอดเงินที่ตรงกันเป๊ะ */
@@ -459,6 +494,50 @@ function matchBill(b) {
   }).catch(function (e) { toast('AI จับคู่ไม่สำเร็จ: ' + e.message + ' — เลือกคู่เองได้', true); });
 }
 
+// ── เปรียบเทียบ Lot / วันผลิต / วันหมดอายุ (เฉพาะบิลที่พิมพ์ข้อมูลพวกนี้มา) ──
+function normLotText(s) { return String(s || '').toUpperCase().replace(/^\s*LOT[.:\s]*/, '').replace(/[\s.\-\/]+/g, ''); }
+/** "05.09.2026" / "5/9/69" → {d, m, y} (ค.ศ.) */
+function parseBillDate(s) {
+  var m = String(s || '').match(/(\d{1,2})\D+(\d{1,2})\D+(\d{2,4})/);
+  if (!m) return null;
+  var y = Number(m[3]);
+  if (y < 100) y += y >= 60 ? 2500 : 2000;
+  if (y > 2400) y -= 543;
+  return { d: Number(m[1]), m: Number(m[2]), y: y };
+}
+function fmtD(x) { return x ? ('0' + x.d).slice(-2) + '/' + ('0' + x.m).slice(-2) + '/' + x.y : '-'; }
+/** วันที่ตรงกันไหม — ถ้าเราบันทึกแบบเดือน/ปี (MFG วันที่ 1, EXP วันสุดท้ายของเดือน) ถือว่าตรงเมื่อเดือนปีตรง */
+function sameDate(bill, ours, kind) {
+  if (!bill || !ours) return false;
+  if (bill.d === ours.d && bill.m === ours.m && bill.y === ours.y) return true;
+  if (bill.m !== ours.m || bill.y !== ours.y) return false;
+  var lastDay = new Date(ours.y, ours.m, 0).getDate();
+  return kind === 'mfg' ? ours.d === 1 : ours.d === lastDay;
+}
+function lotIssues(line, r) {
+  var lots = line.lots || [];
+  if (!lots.length) return [];
+  var ourLot = normLotText(r.lot);
+  var hit = lots.filter(function (a) { return normLotText(a.lot) === ourLot; })[0];
+  var issues = [];
+  var billLots = lots.map(function (a) { return a.lot; }).filter(Boolean).join(', ');
+  if (billLots && !hit) issues.push(ourLot ? 'Lot: บิล ' + billLots + ' / รับเข้า ' + r.lot : 'ไม่ได้กรอก Lot (บิล ' + billLots + ')');
+  var ref = hit || lots[0];
+  [['mfg', 'MFG'], ['exp', 'EXP']].forEach(function (k) {
+    var b = parseBillDate(ref[k[0]]);
+    if (!b) return;
+    var o = parseBillDate(r[k[0]]);
+    if (!o) issues.push('ไม่ได้กรอก ' + k[1] + ' (บิล ' + fmtD(b) + ')');
+    else if (!sameDate(b, o, k[0])) issues.push(k[1] + ': บิล ' + fmtD(b) + ' / รับเข้า ' + fmtD(o));
+  });
+  return issues;
+}
+function lotText(lots) {
+  return (lots || []).map(function (a) {
+    return 'Lot ' + (a.lot || '-') + (a.mfg ? ' · MFG ' + fmtD(parseBillDate(a.mfg)) : '') + (a.exp ? ' · EXP ' + fmtD(parseBillDate(a.exp)) : '');
+  }).join(' | ');
+}
+
 // ── เปรียบเทียบ ──
 function evalPair(b, p) {
   var rows = b.group >= 0 ? ST.groups[b.group] : [];
@@ -473,6 +552,7 @@ function evalPair(b, p) {
   if (Math.abs(expect - r.qty) > 1e-6) issues.push('จำนวน: บิล ' + bq + ' ' + (p.line.unit || '') + (p.factor !== 1 ? ' (= ' + expect + ' ' + (r.unit || '') + ')' : '') + ' / รับเข้า ' + r.qty + ' ' + (r.unit || ''));
   if (rt === null && bt > 0) issues.push('ไม่ได้กรอกราคา (บิล ' + money(bt) + ')');
   else if (rt !== null && Math.abs(rt - bt) > 1) issues.push('ราคา: บิล ' + money(bt) + ' / รับเข้า ' + money(rt) + ' (ต่าง ' + money(rt - bt) + ')');
+  issues = issues.concat(lotIssues(p.line, r));
   return issues.length ? { cls: 'warn', text: issues.join(' · ') } : { cls: 'ok', text: 'ตรง' };
 }
 var RES_LABEL = { ok: '✅ ตรง', warn: '🟠 ไม่ตรง', bad: '🔴 ไม่ได้บันทึกรับเข้า', info: '🔵 บันทึกรับเข้า แต่ไม่มีในบิล', grey: '⚪ ' };
@@ -505,19 +585,25 @@ function itemHtml(bi, b, x) {
   var res = x.ev.cls === 'ok' ? '✅ ตรง' : (x.ev.cls === 'grey' ? '⚪ ' : (x.ev.cls === 'bad' ? '🔴 ' : '🟠 ')) + esc(x.ev.text);
   return '<div class="item ' + x.ev.cls + '"><div class="res">' + res + '</div>' +
     '<div class="bl"><b>บิล #' + esc(p.line.no || p.i + 1) + '</b> ' + esc(p.line.name) + (p.line.code ? ' <span class="sub">' + esc(p.line.code) + '</span>' : '') + '</div>' +
-    '<div class="sub">' + esc(p.line.qty) + ' ' + esc(p.line.unit || '') + ' · ' + money(p.line.total) + ' บาท</div>' +
+    '<div class="sub">' + esc(p.line.qty) + ' ' + esc(p.line.unit || '') + (p.line.freeQty ? ' (รวมของแถม ' + p.line.freeQty + ')' : '') + ' · ' + money(p.line.total) + ' บาท</div>' +
+    (p.line.lots && p.line.lots.length ? '<div class="sub">บิล: ' + esc(lotText(p.line.lots)) + '</div>' : '') +
     '<div class="pick"><select class="in" onchange="pickRow(' + bi + ',' + p.i + ',this.value)">' + opts + '</select>' + (p.src ? SRC_TAG[p.src] : '') + '</div>' +
+    (r && p.line.lots && p.line.lots.length ? '<div class="sub">รับเข้า: Lot ' + esc(r.lot || '-') + ' · MFG ' + esc(r.mfg || '-') + ' · EXP ' + esc(r.exp || '-') + '</div>' : '') +
     (r ? '<div class="pick sub">รับเข้า ' + r.qty + ' ' + esc(r.unit) + ' · ' + money(r.price) + ' บาท · 1 ' + esc(p.line.unit || 'หน่วยในบิล') + ' = <input class="in fac" value="' + fmtFactor(p.factor) + '" onchange="setFactor(' + bi + ',' + p.i + ',this.value)"> ' + esc(r.unit || 'หน่วยของเรา') +
       (p.src !== 'mem' ? ' · <label><input type="checkbox"' + (p.remember ? ' checked' : '') + ' onchange="setRemember(' + bi + ',' + p.i + ',this.checked)"> จำคู่นี้</label>' : '') + '</div>' : '') +
     '</div>';
 }
+
+/** ยอดที่ใช้เทียบ: บิลที่มีส่วนลดท้ายบิล (เช่น SPECIAL DISCOUNT 5%) เทียบกับยอดก่อนส่วนลด เพราะราคาที่บันทึกเป็นยอดของแต่ละบรรทัดในบิล */
+function billRef(b) { return b.discount && b.subtotal !== null ? b.subtotal : b.grand; }
 
 function render() {
   $('results').innerHTML = ST.bills.map(function (b, bi) {
     var R = billResult(b);
     var problems = R.items.filter(function (x) { return x.ev.cls !== 'ok'; });
     var oks = R.items.filter(function (x) { return x.ev.cls === 'ok'; });
-    var readOk = b.grand === null || Math.abs(b.grand - b.lineTotal) < 0.01;
+    var ref = billRef(b);
+    var readOk = ref === null || Math.abs(ref - b.lineTotal) < 0.01;
     var groupOpts = (b.group < 0 ? '<option value="-1" selected>— เลือกว่าเป็นบิลไหนในรายการรับเข้า —</option>' : '') + ST.groups.map(function (g, gi) {
       return '<option value="' + gi + '"' + (gi === b.group ? ' selected' : '') + '>บิล ' + (gi + 1) + ' ในรายการรับเข้า (' + g.length + ' รายการ · ' + money(rowsTotal(g)) + ')</option>';
     }).join('');
@@ -525,8 +611,9 @@ function render() {
       '<div class="hint">' + esc(b.date) + ' · อ่านได้ ' + b.pagesRead + (b.pagesTotal ? '/' + b.pagesTotal : '') + ' หน้า</div>' +
       (b.pagesTotal && b.pagesRead < b.pagesTotal ? '<div class="status bad">⚠️ ถ่ายมาไม่ครบทุกหน้า — รายการในหน้าที่ขาดจะไม่ถูกตรวจ</div>' : '') +
       '<div style="margin:8px 0"><select class="in" onchange="setGroup(' + bi + ',this.value)">' + groupOpts + '</select></div>' +
-      '<div class="tot">ยอดท้ายบิล <b>' + money(b.grand) + '</b> ' + (readOk ? '' : '<span class="diff">⚠️ รวมบรรทัดที่อ่านได้ ' + money(b.lineTotal) + ' ไม่เท่ายอดท้ายบิล — ถ่ายใหม่ให้ชัด</span>') + '</div>' +
-      '<div class="tot">ยอดที่บันทึกรับเข้า <b>' + money(R.ourTotal) + '</b> ' + (b.grand !== null && Math.abs(R.ourTotal - b.grand) > 1 ? '<span class="diff">ต่าง ' + money(R.ourTotal - b.grand) + '</span>' : '✅') + '</div>' +
+      (b.discount ? '<div class="tot">ยอดก่อนส่วนลด <b>' + money(b.subtotal) + '</b> · ส่วนลดท้ายบิล ' + money(b.discount) + ' · สุทธิ ' + money(b.grand) + '</div>' : '') +
+      '<div class="tot">' + (b.discount ? 'เทียบกับยอดก่อนส่วนลด' : 'ยอดท้ายบิล') + ' <b>' + money(ref) + '</b> ' + (readOk ? '' : '<span class="diff">⚠️ รวมบรรทัดที่อ่านได้ ' + money(b.lineTotal) + ' ไม่เท่ายอดท้ายบิล — ถ่ายใหม่ให้ชัด</span>') + '</div>' +
+      '<div class="tot">ยอดที่บันทึกรับเข้า <b>' + money(R.ourTotal) + '</b> ' + (ref !== null && Math.abs(R.ourTotal - ref) > 1 ? '<span class="diff">ต่าง ' + money(R.ourTotal - ref) + '</span>' : '✅') + '</div>' +
       '<div class="sum"><div class="s-ok">✅ ' + R.cnt.ok + '</div><div class="s-warn">🟠 ' + R.cnt.warn + '</div><div class="s-bad">🔴 ' + R.cnt.bad + '</div><div class="s-info">🔵 ' + R.extra.length + '</div><div class="s-grey">⚪ ' + (b.backorder.length + R.cnt.grey) + '</div></div>' +
       problems.map(function (x) { return itemHtml(bi, b, x); }).join('') +
       R.extra.map(function (x) {
@@ -574,8 +661,9 @@ function buildReport() {
   var all = [];
   ST.bills.forEach(function (b) {
     var R = billResult(b);
-    summary.push([SUPPLIER_LABEL[b.supplier] || b.supplierName, b.billNo, b.date, b.grand, R.ourTotal,
-      b.grand === null ? '' : Math.round((R.ourTotal - b.grand) * 100) / 100, R.cnt.ok, R.cnt.warn, R.cnt.bad, R.extra.length, b.backorder.length]);
+    var ref = billRef(b);
+    summary.push([SUPPLIER_LABEL[b.supplier] || b.supplierName, b.billNo, b.date, ref, R.ourTotal,
+      ref === null ? '' : Math.round((R.ourTotal - ref) * 100) / 100, R.cnt.ok, R.cnt.warn, R.cnt.bad, R.extra.length, b.backorder.length]);
     R.items.forEach(function (x) {
       all.push({ o: order[x.ev.cls], row: [x.ev.cls === 'grey' ? '⚪ ราคา 0' : RES_LABEL[x.ev.cls], b.billNo, x.p.line.no || x.p.i + 1, x.p.line.code || '', x.p.line.name,
         (x.p.line.qty || '') + ' ' + (x.p.line.unit || ''), num(x.p.line.total), x.r ? x.r.seq : '', x.r ? ourName(x.r) : '',

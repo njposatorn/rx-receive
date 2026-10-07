@@ -1,5 +1,5 @@
 // สร้างโดย tools/build_pwa.js — อย่าแก้ไฟล์นี้โดยตรง
-const CACHE = 'rx-receive-202610040632';
+const CACHE = 'rx-receive-202610070956';
 const SHELL = ['./', 'index.html', 'datelib.js', 'config.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
