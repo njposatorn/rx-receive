@@ -280,16 +280,17 @@ function supplierKey(name) {
   if (/หรรษา/.test(s)) return 'hansa';
   if (/เมืองกาญ|mk\s*medical/i.test(s)) return 'mk';
   if (/ที\s*\.?\s*เอ็น\s*\.?\s*พี|t\s*\.?\s*n\s*\.?\s*p\s*\.?\s*health/i.test(s)) return 'tnp';
+  if (/อริน\s*แคร์|arin\s*care/i.test(s)) return 'arincare';
   return s.trim() || 'อื่น ๆ';
 }
-var SUPPLIER_LABEL = { hansa: 'หรรษา', mk: 'MK (เมืองกาญจน์)', tnp: 'ที เอ็น พี เฮลท์แคร์' };
+var SUPPLIER_LABEL = { hansa: 'หรรษา', mk: 'MK (เมืองกาญจน์)', tnp: 'ที เอ็น พี เฮลท์แคร์', arincare: 'อรินแคร์' };
 function normBillName(s) {
   return String(s || '').replace(/\*[^*]*\*/g, ' ').replace(/\*.*$/, ' ').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 function billLineKey(line) { return line.code ? String(line.code).replace(/\s+/g, '').toUpperCase() : normBillName(line.name); }
 function bcKey(b) { var s = String(b || '').trim().toUpperCase(); return /^\d+$/.test(s) ? s.replace(/^0+/, '') : s; }
 function ourName(r) { return r.name || r.manual || r.barcode || '(ไม่มีชื่อ)'; }
-function pageNo(p) { var m = String(p || '').match(/(\d+)\s*\/\s*(\d+)/); return m ? Number(m[1]) : 0; }
+function pageNo(p) { var m = String(p || '').match(/(\d+)\s*\/\s*(\d+)/) || String(p || '').match(/(\d+)/); return m ? Number(m[1]) : 0; }
 
 /** ตัวคูณจากจำนวน: เราบันทึก 36 ขวด / บิล 3 โหล → 12 ; เราบันทึก 1 ลัง / บิล 24 ถุง → 1/24 */
 function guessFactor(billQty, ourQty) {
@@ -385,9 +386,15 @@ function groupPages(pages) {
       if (p.discount) discount = p.discount;
     });
     // บิลที่พิมพ์ Lot ทุกบรรทัด: บรรทัดที่ไม่มียอดเงินและไม่มี Lot = สินค้าขาดส่ง (เช่นใต้ข้อความ "ขอแจ้งสินค้าขาดสต็อก")
+    // บิลที่มีคอลัมน์ "จำนวนที่ขาดส่ง": ส่วนที่ขาดไปอยู่ในรายการขาดส่ง ; ถ้าไม่ได้ส่งมาเลยก็ไม่ต้องตรวจบรรทัดนั้น
+    lines = lines.filter(function (l) {
+      if (!(num(l.short) > 0)) return true;
+      back.push(Object.assign({}, l, { qty: num(l.short) }));
+      return num(l.qty) > 0;
+    });
     var hasLots = lines.some(function (l) { return l.lot; });
     lines = lines.filter(function (l) {
-      var none = hasLots && !num(l.total) && !l.lot && !l.price;
+      var none = hasLots && !num(l.total) && !l.lot && !l.price && !NOT_GOODS.test(l.name || '');
       if (none) back.push(l);
       return !none;
     });
@@ -403,6 +410,8 @@ function groupPages(pages) {
     };
   });
 }
+
+var NOT_GOODS = /voucher|บัตรกำนัล|คูปอง|coupon/i;   // ไม่ใช่สินค้า — ไม่นับเป็นของขาดส่ง
 
 /**
  * รวมบรรทัดสินค้าเดียวกันในบิลเดียวกัน (รหัสสินค้าเดียวกัน) เช่น บรรทัดที่ซื้อ + บรรทัดของแถม (สินค้าฟรี)
@@ -613,6 +622,7 @@ function render() {
       '<div style="margin:8px 0"><select class="in" onchange="setGroup(' + bi + ',this.value)">' + groupOpts + '</select></div>' +
       (b.discount ? '<div class="tot">ยอดก่อนส่วนลด <b>' + money(b.subtotal) + '</b> · ส่วนลดท้ายบิล ' + money(b.discount) + ' · สุทธิ ' + money(b.grand) + '</div>' : '') +
       '<div class="tot">' + (b.discount ? 'เทียบกับยอดก่อนส่วนลด' : 'ยอดท้ายบิล') + ' <b>' + money(ref) + '</b> ' + (readOk ? '' : '<span class="diff">⚠️ รวมบรรทัดที่อ่านได้ ' + money(b.lineTotal) + ' ไม่เท่ายอดท้ายบิล — ถ่ายใหม่ให้ชัด</span>') + '</div>' +
+      (ref === null ? '<div class="status bad">⚠️ ไม่พบยอดรวมท้ายบิล — ถ้าบิลมีหลายหน้า ตรวจว่าถ่ายครบถึงหน้าสุดท้าย</div>' : '') +
       '<div class="tot">ยอดที่บันทึกรับเข้า <b>' + money(R.ourTotal) + '</b> ' + (ref !== null && Math.abs(R.ourTotal - ref) > 1 ? '<span class="diff">ต่าง ' + money(R.ourTotal - ref) + '</span>' : '✅') + '</div>' +
       '<div class="sum"><div class="s-ok">✅ ' + R.cnt.ok + '</div><div class="s-warn">🟠 ' + R.cnt.warn + '</div><div class="s-bad">🔴 ' + R.cnt.bad + '</div><div class="s-info">🔵 ' + R.extra.length + '</div><div class="s-grey">⚪ ' + (b.backorder.length + R.cnt.grey) + '</div></div>' +
       problems.map(function (x) { return itemHtml(bi, b, x); }).join('') +
