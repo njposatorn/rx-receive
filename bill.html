@@ -281,21 +281,29 @@ function supplierKey(name) {
   if (/เมืองกาญ|mk\s*medical/i.test(s)) return 'mk';
   if (/ที\s*\.?\s*เอ็น\s*\.?\s*พี|t\s*\.?\s*n\s*\.?\s*p\s*\.?\s*health/i.test(s)) return 'tnp';
   if (/อริน\s*แคร์|arin\s*care/i.test(s)) return 'arincare';
+  if (/greater|เกร.?ทเตอร์|มายบาซิน|mybacin/i.test(s)) return 'greater';
   return s.trim() || 'อื่น ๆ';
 }
-var SUPPLIER_LABEL = { hansa: 'หรรษา', mk: 'MK (เมืองกาญจน์)', tnp: 'ที เอ็น พี เฮลท์แคร์', arincare: 'อรินแคร์' };
+var SUPPLIER_LABEL = { hansa: 'หรรษา', mk: 'MK (เมืองกาญจน์)', tnp: 'ที เอ็น พี เฮลท์แคร์', arincare: 'อรินแคร์', greater: 'เกร๊ทเตอร์ (มายบาซิน)' };
 function normBillName(s) {
   return String(s || '').replace(/\*[^*]*\*/g, ' ').replace(/\*.*$/, ' ').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 function billLineKey(line) { return line.code ? String(line.code).replace(/\s+/g, '').toUpperCase() : normBillName(line.name); }
 function bcKey(b) { var s = String(b || '').trim().toUpperCase(); return /^\d+$/.test(s) ? s.replace(/^0+/, '') : s; }
 function ourName(r) { return r.name || r.manual || r.barcode || '(ไม่มีชื่อ)'; }
-function pageNo(p) { var m = String(p || '').match(/(\d+)\s*\/\s*(\d+)/) || String(p || '').match(/(\d+)/); return m ? Number(m[1]) : 0; }
+function pageNo(p) { var m = String(p || '').match(/(\d+)\s*[\/:\-]\s*(\d+)/) || String(p || '').match(/(\d+)/); return m ? Number(m[1]) : 0; }
 
 // ── ตัวคูณหน่วย (1 หน่วยในบิล = กี่หน่วยที่เราลงรับ) — หาจากข้อมูลบรรจุภัณฑ์ ไม่ใช่จากจำนวนที่ลงรับ ──
 var UNIT_WORDS = ['โหล', 'ลัง', 'หีบ', 'กล่อง', 'แพ็ค', 'แผง', 'ขวด', 'หลอด', 'ชิ้น', 'ซอง', 'ถุง', 'กระปุก', 'กระป๋อง',
   'ตลับ', 'ม้วน', 'ใบ', 'อัน', 'เม็ด', 'ห่อ', 'ชุด', 'แกลลอน', 'คู่', 'ตัว', 'ก้อน', 'แท่ง', 'กระบอก', 'ถาด', 'แผ่น', 'แคปซูล'];
 function unitInfo(u) {
+  // แบบ "X 10 X 10 CAPS." = 1 หน่วยบรรจุ 10 ชิ้นย่อย ; "X 60 ML." = 1 ชิ้น (ขวด/หลอด) ขนาด 60 มล.
+  var pk = String(u || '').match(/^\s*x\s*(\d+(?:\.\d+)?)\s*(?:x\s*(\d+(?:\.\d+)?)\s*)?([a-z.]*)/i);
+  if (pk) {
+    var meas = pk[3].toLowerCase().replace(/\./g, '');
+    if (pk[2]) return { base: 'กล่อง', count: Number(pk[1]), inner: '', packing: true };
+    return { base: 'ชิ้น', count: 0, inner: '', packing: true, pieces: /^(tab|cap)/.test(meas) ? Number(pk[1]) : 0 };
+  }
   var s = String(u || '').toLowerCase()
     .replace(/\bbo?x(es)?\b/g, 'กล่อง').replace(/\bpa?c?ks?\b/g, 'แพ็ค').replace(/แพค|แพ๊ค/g, 'แพ็ค')
     .replace(/\b(dozen|doz)\b/g, 'โหล').replace(/\btubes?\b/g, 'หลอด').replace(/\b(bottles?|bt)\b/g, 'ขวด')
@@ -303,7 +311,8 @@ function unitInfo(u) {
     .replace(/กระปุ(?!ก)/g, 'กระปุก').replace(/^\s*รย\s*/, '');
   var best = null;
   UNIT_WORDS.forEach(function (w) { var i = s.indexOf(w); if (i >= 0 && (!best || i < best.i)) best = { w: w, i: i }; });
-  var m = s.match(/(\d+(?:\.\d+)?)\s*([ก-๙a-z]*)/);
+  var all = s.match(/\d+(?:\.\d+)?\s*[ก-๙a-z]*/g) || [];            // ใช้ตัวเลขตัวสุดท้าย: "1กล่อง10แผง" → 10 แผง
+  var m = all.length ? all[all.length - 1].match(/(\d+(?:\.\d+)?)\s*([ก-๙a-z]*)/) : null;
   var inner = m && m[2] ? unitInfo(m[2]).base : '';
   return { base: best ? best.w : s.replace(/[\d\s.]+/g, ''), count: m ? Number(m[1]) : 0, inner: inner };
 }
@@ -362,7 +371,14 @@ function ruleFactor(line, r) {
   }
   // เราลงรับเป็นหีบห่อที่บรรจุหน่วยเดียวกับบิล เช่น บิล 24 ถุง / เรา 1 ลัง 24 ถุง
   if (ourCount > 1 && ourInner && sameUnit(ourInner, b.base)) return { f: 1 / ourCount, how: '1 ' + r.unit + ' = ' + ourCount + ' ' + ourInner };
-  // หน่วยในบิลบอกจำนวนบรรจุมาเลย เช่น "ลัง 24", "PACK 10", "กล่อง 50" = บรรจุ N หน่วยขายปลีก
+  // หน่วยในบิลเป็น 1 ชิ้น (เช่น "X 60 ML.") และเราลงเป็นชิ้น/ขวด/หลอด → 1 ; ถ้าเป็นจำนวนเม็ด (X 1400 TABS) และเราลงเป็นซอง → บอกไม่ได้
+  if (b.packing && b.base === 'ชิ้น') {
+    if (!PACK_UNITS[o.base] && !(b.pieces > 1 && (o.base === 'ซอง' || o.base === 'แผง'))) return { f: 1, how: '1 ' + line.unit.trim() + ' = 1 ' + o.base };
+    if (PACK_UNITS[o.base] && ourCount === 1) return { f: 1, how: '1 ' + line.unit.trim() + ' = 1 ' + o.base };
+  }
+  // หน่วยในบิลบรรจุเท่ากับหน่วยของเรา เช่น บิล "X 20 X 20 CAPS" / เรา "กล่อง 20 ซอง"
+  if (b.count > 1 && PACK_UNITS[b.base] && ourCount > 1 && ourCount === b.count) return { f: 1, how: '1 ' + line.unit.trim() + ' = ' + b.count + ' ชิ้น = 1 ' + r.unit };
+  // หน่วยในบิลบอกจำนวนบรรจุมาเลย เช่น "ลัง 24", "PACK 10", "กล่อง 50", "X 30 X 7 GM" = บรรจุ N หน่วยขายปลีก
   if (b.count > 1 && PACK_UNITS[b.base]) {
     if (!PACK_UNITS[o.base] || ourCount === 1 || o.base === 'กล่อง') return { f: b.count, how: '1 ' + line.unit + ' = ' + b.count + ' ' + o.base };
     if (b.count % ourCount === 0) return { f: b.count / ourCount, how: '1 ' + line.unit + ' = ' + b.count + ' ชิ้น / ' + r.unit };
@@ -473,15 +489,31 @@ function groupPages(pages) {
     var k = 'file:' + p.file;
     byNo[k] = [p]; order.push(k);
   });
+  // หน้าต่อที่มีแต่ของแถม (ไม่มียอดเงินเลย ไม่มียอดท้ายบิล) แต่ AI อ่านเลขที่บิลเป็นเลขอื่น เช่นเลขใบสั่งซื้อ
+  // → รวมเข้ากับบิลบริษัทเดียวกันที่มียอดเงิน ถ้ามีบิลแบบนั้นบิลเดียว
+  function hasMoney(k) { return byNo[k].some(function (p) { return p.grandTotal || p.lines.some(function (l) { return num(l.total) > 0; }); }); }
+  order.slice().forEach(function (k) {
+    if (hasMoney(k)) return;
+    var sup = supplierKey(byNo[k][0].supplier);
+    var host = order.filter(function (o) { return o !== k && hasMoney(o) && supplierKey(byNo[o][0].supplier) === sup; });
+    if (host.length !== 1) return;
+    byNo[host[0]] = byNo[host[0]].concat(byNo[k]);
+    order.splice(order.indexOf(k), 1);
+  });
   return order.map(function (k) {
     var ps = byNo[k].sort(function (a, b) { return pageNo(a.page) - pageNo(b.page); });
-    var lines = [], back = [], grand = null, subtotal = null, discount = null;
+    var lines = [], back = [], grand = null, subtotal = null, discount = null, totalGoods = null;
     ps.forEach(function (p) {
-      p.lines.forEach(function (l) { lines.push(l); });
+      p.lines.forEach(function (l) { lines.push(Object.assign({ pageOOS: !!p.outOfStockNote }, l)); });
       (p.backorder || []).forEach(function (l) { back.push(l); });
       if (p.grandTotal !== null && p.grandTotal !== undefined) grand = p.grandTotal;
       if (p.subtotal !== null && p.subtotal !== undefined) subtotal = p.subtotal;
       if (p.discount) discount = p.discount;
+      // ยอดส่วนลดที่ AI ใส่เป็นยอดของสินค้าบรรทัดสุดท้ายโดยผิด → ล้างออก
+      (p.discountItems || []).concat(p.discount ? [p.discount] : []).forEach(function (dv) {
+        p.lines.forEach(function (l) { if (!l.price && num(l.total) && Math.abs(num(l.total) - dv) < 0.005) l.total = null; });
+      });
+      if (p.totalGoods !== null && p.totalGoods !== undefined) totalGoods = p.totalGoods;
     });
     // บิลที่พิมพ์ Lot ทุกบรรทัด: บรรทัดที่ไม่มียอดเงินและไม่มี Lot = สินค้าขาดส่ง (เช่นใต้ข้อความ "ขอแจ้งสินค้าขาดสต็อก")
     // บิลที่มีคอลัมน์ "จำนวนที่ขาดส่ง": ส่วนที่ขาดไปอยู่ในรายการขาดส่ง ; ถ้าไม่ได้ส่งมาเลยก็ไม่ต้องตรวจบรรทัดนั้น
@@ -492,18 +524,21 @@ function groupPages(pages) {
     });
     var hasLots = lines.some(function (l) { return l.lot; });
     lines = lines.filter(function (l) {
-      var none = hasLots && !num(l.total) && !l.lot && !l.price && !NOT_GOODS.test(l.name || '');
+      var none = l.outOfStock || (hasLots && l.pageOOS && !num(l.total) && !l.lot && !l.price && !NOT_GOODS.test(l.name || ''));
       if (none) back.push(l);
       return !none;
     });
     lines = mergeLines(lines);
     var m = null;
-    ps.forEach(function (p) { m = String(p.page || '').match(/\/\s*(\d+)/) || m; });
+    ps.forEach(function (p) { m = String(p.page || '').match(/\d+\s*[\/:\-]\s*(\d+)/) || m; });
     var head = ps.filter(function (p) { return String(p.billNo || '').trim(); })[0] || ps[0];
     return {
       billNo: head.billNo || '(ไม่มีเลขที่)', date: head.date || '', supplier: supplierKey(head.supplier),
       supplierName: head.supplier || '', pagesRead: ps.length, pagesTotal: m ? Number(m[1]) : null,
-      lines: lines, backorder: back, grand: grand, subtotal: discount ? subtotal : null, discount: discount,
+      lines: lines, backorder: back, grand: grand, discount: discount,
+      // ยอดก่อนส่วนลด: ถ้า AI ใส่ยอดหลังหักส่วนลด (= รวมมูลค่าสินค้า) มาเป็น subtotal → คำนวณใหม่จากรวมมูลค่าสินค้า + ส่วนลด
+      subtotal: !discount ? null : (subtotal !== null && !(totalGoods !== null && Math.abs(subtotal - totalGoods) < 0.01) ? subtotal
+        : (totalGoods !== null ? Math.round((totalGoods + discount) * 100) / 100 : null)),
       lineTotal: Math.round(lines.reduce(function (s, l) { return s + num(l.total); }, 0) * 100) / 100
     };
   });
@@ -516,22 +551,64 @@ var NOT_GOODS = /voucher|บัตรกำนัล|คูปอง|coupon/i;  
  * → จำนวนรวม ยอดเงินรวม และเก็บ Lot/MFG/EXP ทุกชุดไว้
  */
 function mergeLines(lines) {
-  var out = [], byCode = {};
+  var out = [], byKey = {};
   lines.forEach(function (l) {
-    var x = Object.assign({}, l, { freeQty: l.free ? num(l.qty) : 0, lots: [] });
+    var x = Object.assign({}, l, { freeQty: l.free || !num(l.total) ? num(l.qty) : 0, lots: [], parts: [num(l.qty) + ' ' + (l.unit || '') + (l.free || !num(l.total) ? ' (แถม)' : '')] });
+    if (!x.freeQty) x.freeQty = 0;
     if (l.lot || l.mfg || l.exp) x.lots.push({ lot: l.lot || '', mfg: l.mfg || '', exp: l.exp || '' });
-    var k = l.code ? String(l.code).replace(/\s+/g, '').toUpperCase() : '';
-    var y = k && byCode[k];
-    if (!y) { if (k) byCode[k] = x; out.push(x); return; }
-    y.qty = num(y.qty) + num(l.qty);
-    y.total = Math.round((num(y.total) + num(l.total)) * 100) / 100;
-    y.freeQty += x.freeQty;
-    if (y.free && !l.free) { y.free = false; y.price = l.price; y.no = l.no; }
-    x.lots.forEach(function (a) {
-      if (!y.lots.some(function (b) { return b.lot === a.lot && b.mfg === a.mfg && b.exp === a.exp; })) y.lots.push(a);
-    });
+    // รหัสสินค้าเดียวกัน หรือ (ถ้าไม่มีรหัส) ชื่อเดียวกันเมื่อตัดคำว่า แถม/ฟรี ออก
+    var k = l.code ? 'c:' + String(l.code).replace(/\s+/g, '').toUpperCase() : 'n:' + freeKeyName(l.name);
+    var y = byKey[k];
+    if (!y) { byKey[k] = x; out.push(x); return; }
+    if (!addLine(y, x)) out.push(x);          // แปลงหน่วยไม่ได้ → แยกไว้เหมือนเดิม
   });
   return out;
+}
+function freeKeyName(name) {
+  return normBillName(String(name || '')
+    .replace(/\(?\s*(สินค้าแถม|ของแถม|สินค้าฟรี|แถม|ฟรี|free\s*goods?|free|bonus)\s*\)?/gi, ' ')
+    .replace(/\(\s*\d+\s*[ก-๙]+(\s*\/\s*[ก-๙]+)?\s*\)/g, ' '));            // ขนาดบรรจุ เช่น (10 ขวด) (10ขวด/แพ็ค)
+}
+/**
+ * 1 หน่วย from = กี่หน่วย to (ใช้ขนาดบรรจุในหน่วย/ชื่อสินค้า เช่น "แพ็ค 10", "(10 ขวด)", "10 ขวด/แพ็ค", โหล = 12)
+ * คืน null ถ้าบอกไม่ได้
+ */
+function lineUnitConv(from, to, names) {
+  var f = unitInfo(from), t = unitInfo(to);
+  if (!f.base || !t.base) return null;
+  if (sameUnit(f.base, t.base)) return 1;
+  if (f.base === 'โหล' && !PACK_UNITS[t.base]) return 12;
+  if (f.count > 1 && PACK_UNITS[f.base] && (!f.inner || sameUnit(f.inner, t.base))) return f.count;
+  for (var i = 0; i < names.length; i++) {
+    var ks = namePacks(names[i]);
+    for (var j = 0; j < ks.length; j++) {
+      if (ks[j].inner && sameUnit(ks[j].inner, t.base) && (!ks[j].outer || sameUnit(ks[j].outer, f.base))) return ks[j].count;
+    }
+    var m = String(names[i] || '').match(/\(\s*(\d+)\s*([ก-๙]+)\s*\)/);       // "(10 ขวด)"
+    if (m && sameUnit(unitInfo(m[2]).base, t.base) && PACK_UNITS[f.base]) return Number(m[1]);
+  }
+  return null;
+}
+/** รวมบรรทัด x เข้า y (แปลงเป็นหน่วยที่เล็กกว่าก่อนถ้าหน่วยต่างกัน) — คืน false ถ้าแปลงหน่วยไม่ได้ */
+function addLine(y, x) {
+  var names = [y.name, x.name];
+  var c = lineUnitConv(x.unit, y.unit, names);                 // 1 หน่วยของ x = c หน่วยของ y
+  if (c === null) {
+    var back = lineUnitConv(y.unit, x.unit, names);            // หน่วยของ y ใหญ่กว่า → เปลี่ยน y เป็นหน่วยของ x
+    if (back === null) return false;
+    y.qty = num(y.qty) * back; y.freeQty = y.freeQty * back; y.unit = x.unit; y.price = null;
+    c = 1;
+  }
+  y.qty = num(y.qty) + num(x.qty) * c;
+  y.freeQty += x.freeQty * c;
+  y.total = Math.round((num(y.total) + num(x.total)) * 100) / 100;
+  if (c !== 1) y.price = null;
+  if (y.free && !x.free) { y.free = false; y.price = x.price; y.no = x.no; }
+  y.parts = y.parts.concat(x.parts);
+  x.lots.forEach(function (a) {
+    if (!y.lots.some(function (b) { return b.lot === a.lot && b.mfg === a.mfg && b.exp === a.exp; })) y.lots.push(a);
+  });
+  return true;
 }
 
 /** เลือกกลุ่มรายการที่ตรงกับแต่ละบิล — นับยอดเงินที่ตรงกันเป๊ะ */
@@ -721,7 +798,7 @@ function itemHtml(bi, b, x) {
   var res = x.ev.cls === 'ok' ? '✅ ตรง' : (x.ev.cls === 'grey' ? '⚪ ' : (x.ev.cls === 'bad' ? '🔴 ' : '🟠 ')) + esc(x.ev.text);
   return '<div class="item ' + x.ev.cls + '"><div class="res">' + res + '</div>' +
     '<div class="bl"><b>บิล #' + esc(p.line.no || p.i + 1) + '</b> ' + esc(p.line.name) + (p.line.code ? ' <span class="sub">' + esc(p.line.code) + '</span>' : '') + '</div>' +
-    '<div class="sub">' + esc(p.line.qty) + ' ' + esc(p.line.unit || '') + (p.line.freeQty ? ' (รวมของแถม ' + p.line.freeQty + ')' : '') + ' · ' + money(p.line.total) + ' บาท</div>' +
+    '<div class="sub">' + esc(p.line.qty) + ' ' + esc(p.line.unit || '') + (p.line.parts && p.line.parts.length > 1 ? ' (รวม ' + p.line.parts.join(' + ') + ')' : (p.line.freeQty ? ' (รวมของแถม ' + p.line.freeQty + ')' : '')) + ' · ' + money(p.line.total) + ' บาท</div>' +
     (p.line.lots && p.line.lots.length ? '<div class="sub">บิล: ' + esc(lotText(p.line.lots)) + '</div>' : '') +
     '<div class="pick"><select class="in" onchange="pickRow(' + bi + ',' + p.i + ',this.value)">' + opts + '</select>' + (p.src ? SRC_TAG[p.src] : '') + '</div>' +
     (r && p.line.lots && p.line.lots.length ? '<div class="sub">รับเข้า: Lot ' + esc(r.lot || '-') + ' · MFG ' + esc(r.mfg || '-') + ' · EXP ' + esc(r.exp || '-') + '</div>' : '') +
