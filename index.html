@@ -825,17 +825,23 @@ function renderRows() {
   var server = (S.serverRows || []).slice().sort(function (a, b) { return (Number(b.seq) || 0) - (Number(a.seq) || 0); });
   var byId = {};
   server.forEach(function (r) { byId[r.id] = r; });
-  var pendingNew = [];
-  Q.items.forEach(function (it) {
+  var pendingNew = [], stale = false;
+  Q.items = Q.items.filter(function (it) {
     var v = queueRowView(it);
     if (it.data.id && byId[it.data.id]) {           // แก้ไขรายการเดิม → แสดงค่าใหม่ทับ
       v.seq = byId[it.data.id].seq;
       var idx = server.indexOf(byId[it.data.id]);
       server[idx] = v;
-    } else if (!it.data.id && !byId[it.data.newId]) {
+    } else if (!it.data.id && byId[it.data.newId]) {
+      if (it.state === 'failed') { stale = true; return false; }   // ที่จริงบันทึกถึงเซิร์ฟเวอร์แล้ว → ทิ้งออกจากคิว
+    } else {
+      // รายการใหม่ที่ยังไม่ถึงเซิร์ฟเวอร์ หรือการแก้ไขรายการที่ไม่มีแล้ว (ลบไป/สร้างไฟล์ไปแล้ว) → แสดงให้เห็น จะได้ลบทิ้งได้
+      if (it.data.id) v._orphan = true;
       pendingNew.push(v);
     }
+    return true;
   });
+  if (stale) qSave();
   S.rows = pendingNew.reverse().concat(server);
   var n = S.rows.length;
   var waiting = Q.items.length;
@@ -851,7 +857,8 @@ function renderRows() {
   if (!n) { box.innerHTML = '<div class="empty">ยังไม่มีรายการ</div>'; return; }
   box.innerHTML = S.rows.map(function (r) {
     var title = r.name || r.manualName || r.barcode;
-    var badge = r._q === 'failed' ? '<div class="qbad">⚠️ ส่งไม่สำเร็จ: ' + esc(r._err) + ' — กดแก้ไขแล้วบันทึกใหม่</div>'
+    var badge = r._orphan ? '<div class="qbad">⚠️ ส่งไม่สำเร็จ: เป็นการแก้ไขรายการที่ไม่มีแล้ว (อาจถูกลบหรือสร้างไฟล์ไปแล้ว) — กดลบทิ้งได้เลย</div>'
+      : r._q === 'failed' ? '<div class="qbad">⚠️ ส่งไม่สำเร็จ: ' + esc(r._err) + ' — กดแก้ไขแล้วบันทึกใหม่ หรือกดลบ</div>'
       : r._q ? '<div class="qwait">⏳ ' + (r._q === 'sending' ? 'กำลังส่ง…' : esc(r._err || 'รอส่ง')) + '</div>' : '';
     return '<div class="item' + (r.name ? '' : ' nf') + (r._q ? ' pending' : '') + '">' + badge +
       '<div class="item-top"><div class="seq">' + (r.seq ? '#' + esc(r.seq) : '⏳') + '</div><div class="item-name">' + esc(title) +
@@ -903,7 +910,7 @@ function deleteRow(id) {
         Q.items = Q.items.filter(function (x) { return x !== it; });
         qSave();
         renderRows();
-        if (!it.data.id) return toast('ลบแล้ว');   // ยังไม่ถึงเซิร์ฟเวอร์ ไม่ต้องลบที่นั่น
+        if (!it.data.id || r._orphan) return toast('ลบแล้ว');   // ไม่มีบนเซิร์ฟเวอร์ ไม่ต้องลบที่นั่น
       }
       call('apiDeleteRow', it ? it.data.id : id).then(function (rows) { setRows(rows); toast('ลบแล้ว'); }).catch(function (e) { toast(e.message, true); });
     } }
